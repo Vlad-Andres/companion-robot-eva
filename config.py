@@ -88,6 +88,14 @@ class IdleBlinkConfig:
 
 
 @dataclass
+class AudioConfig:
+    """Configuration for sound effects."""
+    enabled: bool = True
+    startup_sound: str = "sounds/startup.mp3"
+    blink_sound: str = "sounds/blink.wav"
+
+
+@dataclass
 class RuntimeConfig:
     """Configuration for the main agent loop."""
     decision_loop_interval_seconds: float = 1.0   # Minimum time between LLM calls
@@ -118,6 +126,7 @@ class RobotConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     idle_blink: IdleBlinkConfig = field(default_factory=IdleBlinkConfig)
+    audio: AudioConfig = field(default_factory=AudioConfig)
 
     @classmethod
     def from_yaml(cls, path: str) -> "RobotConfig":

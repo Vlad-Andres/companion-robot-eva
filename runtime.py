@@ -144,12 +144,14 @@ class RobotRuntime:
             EyeExpressionHandler(
                 eye_controller=self.eye_controller,
                 context_manager=self.context_manager,
+                audio_config=self.config.audio,
             )
         )
         self.action_dispatcher.register_handler(
             EyeAnimationHandler(
                 eye_controller=self.eye_controller,
                 context_manager=self.context_manager,
+                audio_config=self.config.audio,
             )
         )
         log.debug("Action handlers registered.")
@@ -278,6 +280,11 @@ class RobotRuntime:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self.eye_controller.play, anim)
         log.info("Startup animation '%s' played.", animation_name)
+
+        # Play startup sound if enabled.
+        if self.config.audio.enabled and self.config.audio.startup_sound:
+            from utils.audio import play_sound
+            play_sound(self.config.audio.startup_sound)
 
     def _handle_shutdown_signal(self) -> None:
         """Signal handler: request graceful shutdown."""

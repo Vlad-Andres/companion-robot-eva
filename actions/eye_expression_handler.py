@@ -42,14 +42,16 @@ class EyeExpressionHandler(BaseActionHandler):
 
     action_type = ActionType.SET_EYE_EXPRESSION
 
-    def __init__(self, eye_controller=None, context_manager=None) -> None:
+    def __init__(self, eye_controller=None, context_manager=None, audio_config=None) -> None:
         """
         Args:
             eye_controller:  EyeController instance.
             context_manager: ContextManager for state updates.
+            audio_config:    AudioConfig for sound effects.
         """
         self._eyes = eye_controller
         self._context = context_manager
+        self._audio = audio_config
 
     async def handle(self, action: Action) -> None:
         """
@@ -86,6 +88,10 @@ class EyeExpressionHandler(BaseActionHandler):
             import asyncio
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, method)
+
+            # Play blink sound if this was a blink expression.
+            if expression in ("blink", "blink_short", "blink_long"):
+                self._play_blink_sound()
         else:
             log.warning("EyeController not available — skipping display for '%s'.", expression)
 
@@ -93,6 +99,13 @@ class EyeExpressionHandler(BaseActionHandler):
         if self._context:
             self._context.update_expression(expression)
             self._context.record_action(ActionType.SET_EYE_EXPRESSION)
+
+
+    def _play_blink_sound(self) -> None:
+        """Helper to play the blink sound if enabled."""
+        if self._audio and self._audio.enabled and self._audio.blink_sound:
+            from utils.audio import play_sound
+            play_sound(self._audio.blink_sound)
 
 
 class EyeAnimationHandler(BaseActionHandler):
@@ -107,9 +120,10 @@ class EyeAnimationHandler(BaseActionHandler):
 
     action_type = ActionType.PLAY_EYE_ANIMATION
 
-    def __init__(self, eye_controller=None, context_manager=None) -> None:
+    def __init__(self, eye_controller=None, context_manager=None, audio_config=None) -> None:
         self._eyes = eye_controller
         self._context = context_manager
+        self._audio = audio_config
 
     async def handle(self, action: Action) -> None:
         """
@@ -134,8 +148,15 @@ class EyeAnimationHandler(BaseActionHandler):
 
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._eyes.play, anim)
+
+            # Play blink sound if this was a blink animation.
+            if animation_name in ("BLINK_SHORT", "BLINK_LONG"):
+                self._play_blink_sound()
         else:
             log.warning("EyeController not available — skipping animation '%s'.", animation_name)
 
-        if self._context:
-            self._context.record_action(ActionType.PLAY_EYE_ANIMATION)
+    def _play_blink_sound(self) -> None:
+        """Helper to play the blink sound if enabled."""
+        if self._audio and self._audio.enabled and self._audio.blink_sound:
+            from utils.audio import play_sound
+            play_sound(self._audio.blink_sound)
