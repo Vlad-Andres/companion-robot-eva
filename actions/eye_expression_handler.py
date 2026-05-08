@@ -10,6 +10,9 @@ Delegates to the EyeController from display/eye_controller.py.
 
 from __future__ import annotations
 
+import asyncio
+import time
+
 from actions.action_types import (
     Action,
     ActionType,
@@ -20,6 +23,20 @@ from actions.base_action_handler import BaseActionHandler
 from utils.logger import get_logger
 
 log = get_logger(__name__)
+
+_EYE_ACTION_LOCK = asyncio.Lock()
+_LAST_EYE_ACTION_AT: float = 0.0
+_MIN_EYE_ACTION_INTERVAL_SECONDS = 1.0
+
+
+async def _reserve_eye_slot() -> bool:
+    global _LAST_EYE_ACTION_AT
+    async with _EYE_ACTION_LOCK:
+        now = time.monotonic()
+        if (now - _LAST_EYE_ACTION_AT) < _MIN_EYE_ACTION_INTERVAL_SECONDS:
+            return False
+        _LAST_EYE_ACTION_AT = now
+        return True
 
 
 class EyeExpressionHandler(BaseActionHandler):
@@ -60,6 +77,9 @@ class EyeExpressionHandler(BaseActionHandler):
         Args:
             action: Action with payload of type SetEyeExpressionPayload.
         """
+        if not await _reserve_eye_slot():
+            return
+
         payload: SetEyeExpressionPayload = action.payload
         expression = payload.expression.lower()
 
@@ -77,6 +97,10 @@ class EyeExpressionHandler(BaseActionHandler):
                 "blink_long": self._eyes.blink_long,
                 "blink_short": self._eyes.blink_short,
                 "saccade": self._eyes.saccade_random,
+                "curious": self._eyes.curious,
+                "confused": self._eyes.confused,
+                "thinking": self._eyes.thinking,
+                "impatient": self._eyes.impatient,
             }
 
             method = expression_map.get(expression)
@@ -84,8 +108,6 @@ class EyeExpressionHandler(BaseActionHandler):
                 log.warning("Unknown expression '%s' — falling back to neutral.", expression)
                 method = self._eyes.reset
 
-            # EyeController methods are synchronous; run in executor to avoid blocking.
-            import asyncio
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, method)
 
@@ -132,13 +154,15 @@ class EyeAnimationHandler(BaseActionHandler):
         Args:
             action: Action with payload of type PlayEyeAnimationPayload.
         """
+        if not await _reserve_eye_slot():
+            return
+
         payload: PlayEyeAnimationPayload = action.payload
         animation_name = payload.animation.upper()
 
         log.info("Playing eye animation: %s", animation_name)
 
         if self._eyes is not None:
-            import asyncio
             from display.eye_controller import Animation
             try:
                 anim = Animation[animation_name]

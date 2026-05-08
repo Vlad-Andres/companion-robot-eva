@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from typing import Optional
+import time
 
 from config import RobotConfig
 from core.action_dispatcher import ActionDispatcher
@@ -28,9 +28,10 @@ from core.context_manager import ContextManager
 from core.event_bus import Event, EventBus
 from core.service_registry import ServiceRegistry
 from memory.memory_store import MemoryStore
-from utils.logger import configure_logging, get_logger
+from utils.logger import get_logger
 
 log = get_logger(__name__)
+eyes_log = get_logger("EYES")
 
 
 class RobotRuntime:
@@ -107,6 +108,19 @@ class RobotRuntime:
         # Subscribe action dispatcher to decision.actions events
         # ------------------------------------------------------------------
         self.event_bus.subscribe("decision.actions", self._on_decision_actions)
+        self.event_bus.subscribe("perception.backend_do", self._on_backend_do)
+        self.event_bus.subscribe("perception.backend_speech", self._on_backend_speech)
+        self.event_bus.subscribe("perception.backend_audio", self._on_backend_audio)
+        self.event_bus.subscribe("perception.backend_listening", self._on_backend_listening)
+        self.event_bus.subscribe("perception.backend_waiting", self._on_backend_waiting)
+
+        self._eye_current_expression: str = "neutral"
+        self._eye_last_change: float = 0.0
+        self._eye_reset_task: asyncio.Task | None = None
+        self._backend_feedback_lock = asyncio.Lock()
+        self._backend_feedback_busy_until: float = 0.0
+        self._listening_side: int = 0
+        self._thinking_task: asyncio.Task | None = None
 
         log.info("RobotRuntime initialized.")
 
@@ -225,6 +239,150 @@ class RobotRuntime:
         """
         raw_actions = event.data or []
         await self.action_dispatcher.dispatch_raw(raw_actions)
+
+    async def _set_eye_expression(self, expression: str, min_interval_seconds: float = 1.0, force: bool = False) -> None:
+        expr = str(expression or "").strip().lower()
+        if not expr:
+            return
+
+        now = time.monotonic()
+        min_interval_seconds = max(1.0, float(min_interval_seconds))
+        if not force:
+            if expr == self._eye_current_expression:
+                return
+            if (now - self._eye_last_change) < min_interval_seconds:
+                return
+
+        self._eye_current_expression = expr
+        self._eye_last_change = now
+        eyes_log.info("set_eye_expression=%s", expr)
+        await self.action_dispatcher.dispatch_raw(
+            [{"type": "set_eye_expression", "payload": {"expression": expr}}]
+        )
+
+    def _schedule_eye_neutral(self, delay_seconds: float = 1.0) -> None:
+        if self._eye_reset_task and not self._eye_reset_task.done():
+            self._eye_reset_task.cancel()
+            eyes_log.debug("cancel_pending_neutral_reset")
+
+        eyes_log.debug("schedule_neutral_reset_in=%.2fs", delay_seconds)
+
+        async def _reset() -> None:
+            try:
+                await asyncio.sleep(delay_seconds)
+                await self._set_eye_expression("neutral", force=True)
+            except asyncio.CancelledError:
+                pass
+
+        self._eye_reset_task = asyncio.create_task(_reset())
+
+    async def _try_reserve_backend_feedback(self, duration_seconds: float) -> bool:
+        async with self._backend_feedback_lock:
+            now = time.monotonic()
+            if now < self._backend_feedback_busy_until:
+                eyes_log.debug(
+                    "busy_drop_backend_feedback remaining=%.2fs",
+                    (self._backend_feedback_busy_until - now),
+                )
+                return False
+            self._backend_feedback_busy_until = now + max(0.0, float(duration_seconds))
+            eyes_log.debug("reserve_backend_feedback duration=%.2fs", duration_seconds)
+            return True
+
+    def _cancel_thinking(self) -> None:
+        if self._thinking_task and not self._thinking_task.done():
+            self._thinking_task.cancel()
+        self._thinking_task = None
+
+    async def _on_backend_do(self, event: Event) -> None:
+        cmd = str(event.data or "").strip()
+        if not cmd:
+            return
+
+        if not await self._try_reserve_backend_feedback(duration_seconds=1.6):
+            return
+
+        eyes_log.info("backend_do cmd=%s", cmd)
+        self._cancel_thinking()
+        await self.action_dispatcher.dispatch_raw(
+            [{"type": "set_eye_expression", "payload": {"expression": "curious"}}]
+        )
+        await self.action_dispatcher.dispatch_raw(
+            [{"type": "speak", "payload": {"text": f"OK. {cmd}."}}]
+        )
+
+    async def _on_backend_speech(self, event: Event) -> None:
+        text = str(event.data or "").strip()
+        if not text:
+            return
+
+        if not await self._try_reserve_backend_feedback(duration_seconds=2.0):
+            return
+
+        eyes_log.info("backend_speech len=%d", len(text))
+        self._cancel_thinking()
+        await self.action_dispatcher.dispatch_raw(
+            [{"type": "set_eye_expression", "payload": {"expression": "happy"}}]
+        )
+        await self.action_dispatcher.dispatch_raw(
+            [{"type": "speak", "payload": {"text": text}}]
+        )
+
+    async def _on_backend_audio(self, event: Event) -> None:
+        audio_bytes = event.data
+        if not isinstance(audio_bytes, (bytes, bytearray)) or not audio_bytes:
+            return
+
+        if not await self._try_reserve_backend_feedback(duration_seconds=2.5):
+            return
+
+        eyes_log.info("backend_audio bytes=%d", len(audio_bytes))
+        self._cancel_thinking()
+        await self.action_dispatcher.dispatch_raw(
+            [{"type": "set_eye_expression", "payload": {"expression": "happy"}}]
+        )
+
+        from utils.audio import play_wav_bytes
+
+        play_wav_bytes(bytes(audio_bytes), device=self.config.audio.device)
+
+    async def _on_backend_listening(self, _event: Event) -> None:
+        if time.monotonic() < self._backend_feedback_busy_until:
+            return
+        if self._thinking_task is not None:
+            return
+
+        self._listening_side = 1 - self._listening_side
+        anim = "MOVE_LEFT_BIG" if self._listening_side == 0 else "MOVE_RIGHT_BIG"
+        eyes_log.info("listening anim=%s", anim)
+        await self.action_dispatcher.dispatch_raw(
+            [{"type": "play_eye_animation", "payload": {"animation": anim}}]
+        )
+
+    async def _on_backend_waiting(self, _event: Event) -> None:
+        if time.monotonic() < self._backend_feedback_busy_until:
+            return
+        if self._thinking_task is not None and not self._thinking_task.done():
+            return
+
+        eyes_log.info("thinking start")
+
+        async def _loop() -> None:
+            try:
+                while True:
+                    await self.action_dispatcher.dispatch_raw(
+                        [{"type": "set_eye_expression", "payload": {"expression": "thinking"}}]
+                    )
+                    await asyncio.sleep(2.2)
+
+                    await self.action_dispatcher.dispatch_raw(
+                        [{"type": "set_eye_expression", "payload": {"expression": "impatient"}}]
+                    )
+                    await asyncio.sleep(3.3)
+            except asyncio.CancelledError:
+                pass
+
+        self._thinking_task = asyncio.create_task(_loop())
 
     # ------------------------------------------------------------------
     # Lifecycle

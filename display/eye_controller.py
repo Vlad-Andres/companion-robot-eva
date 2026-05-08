@@ -33,6 +33,10 @@ class Animation(enum.IntEnum):
     HAPPY = 6
     SLEEP = 7
     SACCADE_RANDOM = 8
+    CURIOUS = 9
+    CONFUSED = 10
+    THINKING = 11
+    IMPATIENT = 12
 
 
 class EyeController:
@@ -86,7 +90,7 @@ class EyeController:
     # Core draw primitive
     # ------------------------------------------------------------------
 
-    def draw(self, lx=None, rx=None, h=None, mode=None) -> None:
+    def draw(self, lx=None, rx=None, h=None, mode=None, brow=None) -> None:
         """
         Render the eyes to the OLED display.
 
@@ -95,6 +99,7 @@ class EyeController:
             rx:   X centre of right eye (defaults to self.rx).
             h:    Eye height in pixels (defaults to self.h).
             mode: Rendering mode — None (normal), "happy", or "sleep".
+            brow: Brow mode — None, "raised", or "furrowed".
         """
         from luma.core.render import canvas
         lx = lx if lx is not None else self.lx
@@ -111,11 +116,25 @@ class EyeController:
                 else:
                     d.rounded_rectangle(box, radius=min(h // 2, self.rad), fill="white")
 
+            if brow == "raised":
+                for x in [lx, rx]:
+                    left = x - (self.w // 2) + 3
+                    right = x + (self.w // 2) - 3
+                    y = 4
+                    d.line([(left, y + 2), (x, y), (right, y + 2)], fill="white", width=1)
+            elif brow == "furrowed":
+                for x in [lx, rx]:
+                    left = x - (self.w // 2) + 3
+                    right = x + (self.w // 2) - 3
+                    y = 4
+                    d.line([(left, y), (x - 2, y + 2)], fill="white", width=1)
+                    d.line([(right, y), (x + 2, y + 2)], fill="white", width=1)
+
     def clear(self) -> None:
         """Clear the display (blank screen)."""
         from luma.core.render import canvas
-        with canvas(self.device) as d:
-            pass  # Drawing nothing clears the buffer
+        with canvas(self.device) as _:
+            pass
 
     # ------------------------------------------------------------------
     # Named animations
@@ -153,7 +172,7 @@ class EyeController:
 
     def happy(self) -> None:
         """Render upward arc eyes (smile shape)."""
-        self.draw(mode="happy")
+        self.draw(mode="happy", brow="raised")
 
     def sleep(self) -> None:
         """Render thin horizontal line eyes (sleeping)."""
@@ -163,6 +182,44 @@ class EyeController:
         """Shift eyes by a random horizontal offset (−16 to +16 px)."""
         offset = random.randint(-16, 16)
         self.draw(lx=self.lx + offset, rx=self.rx + offset)
+
+    def curious(self) -> None:
+        """Curious look: raised brows plus a small saccade."""
+        self.draw(brow="raised")
+        time.sleep(0.15)
+        offset = random.randint(-8, 8)
+        self.draw(lx=self.lx + offset, rx=self.rx + offset, brow="raised")
+
+    def confused(self) -> None:
+        """Confused look: furrowed brows plus a couple small saccades."""
+        self.draw(brow="furrowed")
+        time.sleep(0.15)
+        for _ in range(2):
+            offset = random.randint(-10, 10)
+            self.draw(lx=self.lx + offset, rx=self.rx + offset, brow="furrowed")
+            time.sleep(0.18)
+        self.reset()
+
+    def thinking(self) -> None:
+        """Thinking loop: look left/right with furrowed brows then saccade."""
+        self.draw(brow="furrowed")
+        time.sleep(0.2)
+        self.draw(lx=self.lx - 12, rx=self.rx - 12, brow="furrowed")
+        time.sleep(0.35)
+        self.draw(lx=self.lx + 12, rx=self.rx + 12, brow="furrowed")
+        time.sleep(0.35)
+        self.saccade_random()
+        time.sleep(0.25)
+        self.reset()
+
+    def impatient(self) -> None:
+        """Impatient look: raised brows and repeated quick saccades."""
+        self.draw(brow="raised")
+        for _ in range(3):
+            offset = random.randint(-12, 12)
+            self.draw(lx=self.lx + offset, rx=self.rx + offset, brow="raised")
+            time.sleep(0.12)
+        self.reset()
 
     # ------------------------------------------------------------------
     # Generic play interface

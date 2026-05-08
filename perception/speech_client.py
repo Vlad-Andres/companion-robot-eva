@@ -17,15 +17,16 @@ from __future__ import annotations
 import asyncio
 import math
 import struct
+import time
 from typing import Optional
+
+import websockets
 
 from config import SpeechAPIConfig
 from core.context_manager import ContextManager
 from core.event_bus import Event, EventBus
 from perception.base_perception import BasePerceptionClient
-from utils.http_client import join_url, post_bytes_for_json
 from utils.logger import get_logger
-from utils.retry import async_retry
 
 log = get_logger(__name__)
 
@@ -50,18 +51,7 @@ def _pcm16le_rms(data: bytes) -> Optional[float]:
 
 class SpeechClient(BasePerceptionClient):
     """
-    Connects to the voice-to-text API and processes microphone audio events.
-
-    Flow:
-        1. Receives "sensor.audio" event (raw audio chunk).
-        2. POSTs audio bytes to SpeechAPIConfig.base_url + endpoint.
-        3. Parses "text" field from JSON response.
-        4. Skips empty transcriptions.
-        5. Updates ContextManager.last_speech and conversation history.
-        6. Publishes "perception.speech" event.
-
-    API contract expected response:
-        {"text": "Hello robot, can you see my cup?"}
+    Connects to the voice-to-text API via WebSockets for low-latency streaming.
     """
 
     name = "speech_client"
@@ -72,93 +62,158 @@ class SpeechClient(BasePerceptionClient):
         context_manager: ContextManager,
         config: SpeechAPIConfig,
     ) -> None:
-        """
-        Args:
-            event_bus:       Shared EventBus.
-            context_manager: Shared ContextManager.
-            config:          SpeechAPI configuration.
-        """
         super().__init__(event_bus, context_manager)
         self.config = config
-        self._semaphore = asyncio.Semaphore(1)
+        self._ws: Optional[websockets.WebSocketClientProtocol] = None
+        self._outbox: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)
+        self._manager_task: Optional[asyncio.Task] = None
+        self._last_listening_event_at: float = 0.0
+        self._awaiting_backend: bool = False
+        self._waiting_task: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
-        """Subscribe to sensor.audio events."""
+        """Subscribe to events and start the connection manager."""
         if self.config.enabled:
             self.event_bus.subscribe("sensor.audio", self.process)
-            log.info("SpeechClient subscribed to 'sensor.audio'.")
+            # The manager owns the full lifecycle of the connection
+            self._manager_task = asyncio.create_task(self._connection_manager())
+            log.info("SpeechClient started (Best-practice WebSocket mode).")
         else:
-            log.info("SpeechClient disabled — skipping subscription.")
+            log.info("SpeechClient disabled.")
 
     async def stop(self) -> None:
-        """Unsubscribe from sensor events."""
+        """Unsubscribe and stop the manager."""
         self.event_bus.unsubscribe("sensor.audio", self.process)
+        if self._manager_task:
+            self._manager_task.cancel()
+            try:
+                await self._manager_task
+            except asyncio.CancelledError:
+                pass
         log.info("SpeechClient stopped.")
 
-    async def process(self, event: Event) -> None:
+    async def _connection_manager(self) -> None:
         """
-        Handle a sensor.audio event.
-
-        Args:
-            event: Event with raw audio chunk as data (bytes).
+        Main lifecycle task. Handles persistent connection, 
+        sending (producer), and receiving (consumer).
         """
-        async with self._semaphore:
-            audio_chunk = event.data
-            if audio_chunk is None:
-                return
+        ws_url = self.config.base_url.replace("http://", "ws://").replace("https://", "wss://")
+        if not ws_url.endswith("/"):
+            ws_url += "/"
 
+        while True:
             try:
-                text = await async_retry(
-                    self._call_api,
-                    audio_chunk,
-                    retries=2,
-                    base_delay=0.3,
+                log.info("Connecting to STT WebSocket at %s...", ws_url)
+                async with websockets.connect(ws_url) as ws:
+                    log.info("STT WebSocket connected.")
+                    self._ws = ws
+                    
+                    # Run producer (sender) and consumer (receiver) concurrently
+                    # If either fails, both will be cancelled and we'll reconnect.
+                    producer = asyncio.create_task(self._producer_loop())
+                    consumer = asyncio.create_task(self._consumer_loop())
+                    
+                    _done, pending = await asyncio.wait(
+                        [producer, consumer],
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    
+                    # Cleanup
+                    for task in pending:
+                        task.cancel()
+                    
+                log.warning("WebSocket connection closed normally. Reconnecting...")
+            except asyncio.CancelledError:
+                break
+            except (websockets.ConnectionClosed, Exception) as e:
+                log.error("WebSocket error: %s. Retrying in 5s...", e)
+            
+            self._ws = None
+            await asyncio.sleep(5)
+
+    async def _producer_loop(self) -> None:
+        """Pulls audio chunks from the outbox queue and sends them."""
+        while True:
+            chunk = await self._outbox.get()
+            if self._ws:
+                try:
+                    await self._ws.send(chunk)
+                    if not self._awaiting_backend:
+                        self._awaiting_backend = True
+                        if self._waiting_task and not self._waiting_task.done():
+                            self._waiting_task.cancel()
+                        self._waiting_task = asyncio.create_task(self._emit_waiting())
+                except Exception as e:
+                    log.error("Failed to send chunk: %s", e)
+                    raise
+            self._outbox.task_done()
+
+    async def _emit_waiting(self) -> None:
+        try:
+            await asyncio.sleep(0.9)
+            if self._awaiting_backend:
+                await self.event_bus.publish(
+                    Event(topic="perception.backend_waiting", data=None, source=self.name)
                 )
-            except Exception as exc:
-                log.error("Speech API call failed: %s", exc)
-                return
+        except asyncio.CancelledError:
+            pass
 
-            if not text or not text.strip():
-                log.debug("Empty transcription — skipping.")
-                return
+    async def _consumer_loop(self) -> None:
+        """Listens for transcription results from the server."""
+        if not self._ws:
+            return
+        async for message in self._ws:
+            try:
+                self._awaiting_backend = False
+                if self._waiting_task and not self._waiting_task.done():
+                    self._waiting_task.cancel()
 
-            log.info("Transcribed speech: %r", text)
-            self.context.update_speech(text)
+                if isinstance(message, (bytes, bytearray)):
+                    await self.event_bus.publish(
+                        Event(topic="perception.backend_audio", data=bytes(message), source=self.name)
+                    )
+                    continue
+
+                text = str(message).strip()
+                if not text:
+                    continue
+
+                if text.startswith("DO "):
+                    cmd = text[3:].strip()
+                    if cmd:
+                        await self.event_bus.publish(
+                            Event(topic="perception.backend_do", data=cmd, source=self.name)
+                        )
+                else:
+                    await self.event_bus.publish(
+                        Event(topic="perception.backend_speech", data=text, source=self.name)
+                    )
+            except Exception as e:
+                log.error("Error parsing STT response: %s", e)
+
+    async def process(self, event: Event) -> None:
+        """Handle a sensor.audio event by putting it in the outbox."""
+        audio_chunk = event.data
+        if audio_chunk is None:
+            return
+
+        # Use a very sensitive RMS check to skip pure silence
+        # 150 is a good threshold for the WM8960
+        rms = _pcm16le_rms(audio_chunk)
+        if rms is not None and rms < 150:
+            return
+
+        now = time.monotonic()
+        if (now - self._last_listening_event_at) > 1.5:
+            self._last_listening_event_at = now
             await self.event_bus.publish(
-                Event(
-                    topic="perception.speech",
-                    data=text,
-                    source=self.name,
-                )
+                Event(topic="perception.backend_listening", data=None, source=self.name)
             )
 
-    async def _call_api(self, audio_chunk: bytes) -> Optional[str]:
-        """
-        Send the audio chunk to the voice-to-text API and return the transcript.
-
-        Args:
-            audio_chunk: Raw PCM audio bytes.
-
-        Returns:
-            Transcribed text string, or None/empty string if nothing was spoken.
-
-        Expected request:
-            POST <base_url><endpoint> with raw PCM bytes.
-            Content-Type: audio/pcm (adjust if your API expects WAV/FLAC/etc.)
-        """
-        if not audio_chunk:
-            return ""
-
-        rms = _pcm16le_rms(audio_chunk)
-        if rms is not None and rms < 200:
-            return ""
-
-        url = join_url(self.config.base_url, self.config.endpoint)
-        data = await post_bytes_for_json(
-            url=url,
-            payload=audio_chunk,
-            content_type="audio/pcm",
-            timeout_seconds=self.config.timeout_seconds,
-        )
-        text = data.get("text")
-        return text if isinstance(text, str) else ""
+        try:
+            self._outbox.put_nowait(audio_chunk)
+        except asyncio.QueueFull:
+            # Clear if full to stay real-time
+            while not self._outbox.empty():
+                self._outbox.get_nowait()
+            self._outbox.put_nowait(audio_chunk)

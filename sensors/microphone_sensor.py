@@ -18,7 +18,8 @@ from __future__ import annotations
 import asyncio
 import numpy as np
 import pyaudio
-import collections
+import threading
+import queue
 from typing import Optional
 
 from config import MicrophoneConfig
@@ -31,8 +32,8 @@ log = get_logger(__name__)
 
 class MicrophoneSensor(BaseSensor):
     """
-    Captures audio from the microphone in configurable-duration chunks.
-    Uses a high-priority PyAudio callback and a deque for maximum stability.
+    Captures audio from the microphone.
+    Uses a dedicated background thread for chunk reassembly to prevent ALSA overflows.
     """
 
     name = "microphone"
@@ -40,58 +41,115 @@ class MicrophoneSensor(BaseSensor):
     def __init__(self, event_bus: EventBus, config: MicrophoneConfig) -> None:
         super().__init__(event_bus)
         self.config = config
-        self._task: Optional[asyncio.Task] = None
         self._pa: Optional[pyaudio.PyAudio] = None
         self._audio_stream: Optional[pyaudio.Stream] = None
         
-        # Fast thread-safe buffer for callback
-        self._buffer = collections.deque()
+        # Thread-safe communication
+        self._raw_queue = queue.Queue(maxsize=100)
+        self._worker_thread: Optional[threading.Thread] = None
+        self._loop = None
 
     async def start(self) -> None:
         log.info("Starting microphone sensor (channels=%d, rate=%d).", 
                  self.config.channels, self.config.sample_rate)
         
+        self._loop = asyncio.get_running_loop()
+        
         try:
             self._pa = pyaudio.PyAudio()
+            
+            # Attempt to open the stream
             self._audio_stream = self._pa.open(
                 format=pyaudio.paInt16,
                 channels=self.config.channels,
                 rate=self.config.sample_rate,
                 input=True,
                 input_device_index=self.config.device_index,
-                frames_per_buffer=4096, # Increased for stability
+                frames_per_buffer=2048, # Moderate buffer for lower latency
                 stream_callback=self._stream_callback
             )
         except Exception as exc:
-            log.error("Failed to open audio stream: %s", exc)
-            if self._pa:
-                self._pa.terminate()
-            return
+            log.error("Failed to open audio stream: %s. Trying fallback to stereo...", exc)
+            # Fallback for WM8960 if mono is rejected by driver
+            try:
+                self.config.channels = 2
+                self._audio_stream = self._pa.open(
+                    format=pyaudio.paInt16,
+                    channels=2,
+                    rate=self.config.sample_rate,
+                    input=True,
+                    input_device_index=self.config.device_index,
+                    frames_per_buffer=2048,
+                    stream_callback=self._stream_callback
+                )
+                log.info("Successfully opened fallback stereo stream.")
+            except Exception as exc2:
+                log.error("Fatal audio error: %s", exc2)
+                if self._pa: self._pa.terminate()
+                return
 
         self._running = True
-        self._task = asyncio.create_task(self._record_loop(), name="microphone_record")
+        
+        # Start the background worker thread
+        self._worker_thread = threading.Thread(target=self._reassembly_worker, daemon=True)
+        self._worker_thread.start()
+        
         log.info("Microphone sensor started.")
 
     def _stream_callback(self, in_data, frame_count, time_info, status):
-        """High-priority callback from PortAudio."""
+        """Minimal callback to prevent blocking the audio interrupt."""
         if status & pyaudio.paInputOverflow:
-            log.warning("Audio Input Overflow (Status 2) — system too slow.")
+            # We log this but it's less likely now with the queue
+            pass 
         
-        if in_data:
-            self._buffer.append(in_data)
+        if in_data and self._running:
+            try:
+                self._raw_queue.put_nowait(in_data)
+            except queue.Full:
+                pass # Drop data if we're completely stuck
         
         return (None, pyaudio.paContinue)
+
+    def _reassembly_worker(self):
+        """Dedicated thread to process and reassemble audio chunks."""
+        frames_per_chunk = int(self.config.sample_rate * self.config.chunk_duration_seconds)
+        bytes_per_frame = 2 * self.config.channels
+        target_bytes = frames_per_chunk * bytes_per_frame
+        
+        collected = bytearray()
+        
+        while self._running:
+            try:
+                # Block for 100ms waiting for data
+                data = self._raw_queue.get(timeout=0.1)
+                collected.extend(data)
+                
+                if len(collected) >= target_bytes:
+                    chunk_raw = bytes(collected[:target_bytes])
+                    del collected[:target_bytes]
+                    
+                    # Process (Mono conversion)
+                    processed = self._process_raw_data(chunk_raw)
+                    
+                    # Send back to asyncio loop
+                    if processed and self._loop:
+                        asyncio.run_coroutine_threadsafe(
+                            self.event_bus.publish(
+                                Event(topic="sensor.audio", data=processed, source=self.name)
+                            ),
+                            self._loop
+                        )
+            except queue.Empty:
+                continue
+            except Exception as e:
+                log.error("Error in audio reassembly worker: %s", e)
 
     async def stop(self) -> None:
         log.info("Stopping microphone sensor.")
         self._running = False
         
-        if self._task and not self._task.done():
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        if self._worker_thread:
+            self._worker_thread.join(timeout=1.0)
 
         if self._audio_stream:
             try:
@@ -107,46 +165,15 @@ class MicrophoneSensor(BaseSensor):
 
         log.info("Microphone sensor stopped.")
 
-    async def _record_loop(self) -> None:
-        """Assembles chunks from the deque and publishes them."""
-        frames_per_chunk = int(self.config.sample_rate * self.config.chunk_duration_seconds)
-        bytes_per_sample = 2
-        target_bytes = frames_per_chunk * self.config.channels * bytes_per_sample
-        
-        collected_data = bytearray()
-
-        while self._running:
-            try:
-                # Pull all available data from the deque
-                while self._buffer:
-                    collected_data.extend(self._buffer.popleft())
-
-                if len(collected_data) >= target_bytes:
-                    # Extract the chunk
-                    chunk_raw = bytes(collected_data[:target_bytes])
-                    # Keep the remainder
-                    del collected_data[:target_bytes]
-                    
-                    # Process and publish
-                    processed = self._process_raw_data(chunk_raw)
-                    if processed:
-                        await self.event_bus.publish(
-                            Event(topic="sensor.audio", data=processed, source=self.name)
-                        )
-
-                await asyncio.sleep(0.1) # Check buffer every 100ms
-
-            except Exception as exc:
-                log.error("Error in record loop: %s", exc)
-                await asyncio.sleep(0.5)
-
     def _process_raw_data(self, raw_data: bytes) -> Optional[bytes]:
+        """Fast mono conversion using NumPy."""
         try:
-            if self.config.channels > 1:
+            if self.config.channels == 2:
+                # Faster conversion for Stereo -> Mono
                 samples = np.frombuffer(raw_data, dtype=np.int16)
-                samples = samples.reshape(-1, self.config.channels)
-                mono_samples = samples.mean(axis=1).astype(np.int16)
-                return mono_samples.tobytes()
+                # Take every 2nd sample and average with neighbor
+                mono = (samples[0::2].astype(np.int32) + samples[1::2].astype(np.int32)) // 2
+                return mono.astype(np.int16).tobytes()
             return raw_data
         except Exception as exc:
             log.error("Failed to process audio data: %s", exc)

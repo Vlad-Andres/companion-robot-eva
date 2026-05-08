@@ -37,10 +37,10 @@ class CameraConfig:
 @dataclass
 class MicrophoneConfig:
     """Configuration for audio capture."""
-    device_index: Optional[int] = None       # None = system default
+    device_index: Optional[int] = None
     sample_rate: int = 16000
-    chunk_duration_seconds: float = 3.0      # Audio chunk size sent to STT API
-    channels: int = 2                        # WM8960 usually requires stereo (2 channels)
+    chunk_duration_seconds: float = 1.5      # 1.5s is the "sweet spot" for speed vs accuracy
+    channels: int = 1
 
 
 @dataclass
@@ -55,9 +55,9 @@ class VisionAPIConfig:
 @dataclass
 class SpeechAPIConfig:
     """Configuration for the voice-to-text API."""
-    base_url: str = "http://localhost:8002"
+    base_url: str = "http://192.168.2.4:8002" # Updated to your computer's IP
     endpoint: str = "/transcribe"
-    timeout_seconds: float = 10.0
+    timeout_seconds: float = 30.0            # Increased to 30s for local STT
     enabled: bool = True
 
 
