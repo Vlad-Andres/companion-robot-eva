@@ -99,6 +99,11 @@ class RobotRuntime:
         self._register_decision_engine()
 
         # ------------------------------------------------------------------
+        # Idle behaviors (autonomous reflex behavior)
+        # ------------------------------------------------------------------
+        self._register_idle_behaviors()
+
+        # ------------------------------------------------------------------
         # Subscribe action dispatcher to decision.actions events
         # ------------------------------------------------------------------
         self.event_bus.subscribe("decision.actions", self._on_decision_actions)
@@ -186,6 +191,22 @@ class RobotRuntime:
         )
         self.service_registry.register(self.decision_engine)
         log.debug("Decision engine registered.")
+
+    def _register_idle_behaviors(self) -> None:
+        """Register autonomous idle behaviours (e.g. periodic blinking)."""
+        from behaviors.idle_blink import IdleBlinkService
+
+        blink_cfg = self.config.idle_blink
+        if blink_cfg.enabled:
+            self.service_registry.register(
+                IdleBlinkService(
+                    event_bus=self.event_bus,
+                    min_interval=blink_cfg.min_interval_seconds,
+                    max_interval=blink_cfg.max_interval_seconds,
+                    long_blink_chance=blink_cfg.long_blink_chance,
+                )
+            )
+            log.debug("IdleBlinkService registered.")
 
     # ------------------------------------------------------------------
     # Event handlers

@@ -123,26 +123,19 @@ class EyeAnimationHandler(BaseActionHandler):
 
         log.info("Playing eye animation: %s", animation_name)
 
-        if self._eyes is None:
+        if self._eyes is not None:
+            import asyncio
+            from display.eye_controller import Animation
+            try:
+                anim = Animation[animation_name]
+            except KeyError:
+                log.warning("Unknown animation '%s' — skipping.", animation_name)
+                return
+
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._eyes.play, anim)
+        else:
             log.warning("EyeController not available — skipping animation '%s'.", animation_name)
-            return
-
-        # TODO: Import Animation enum and call eye_controller.play(anim).
-        #       Example:
-        #           from display.eye_controller import Animation
-        #           anim = Animation[animation_name]
-        #           await loop.run_in_executor(None, self._eyes.play, anim)
-
-        import asyncio
-        from display.eye_controller import Animation
-        try:
-            anim = Animation[animation_name]
-        except KeyError:
-            log.warning("Unknown animation '%s' — skipping.", animation_name)
-            return
-
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._eyes.play, anim)
 
         if self._context:
             self._context.record_action(ActionType.PLAY_EYE_ANIMATION)

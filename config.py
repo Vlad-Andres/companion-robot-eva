@@ -79,6 +79,15 @@ class MemoryConfig:
 
 
 @dataclass
+class IdleBlinkConfig:
+    """Configuration for the autonomous idle blink behaviour."""
+    enabled: bool = True
+    min_interval_seconds: float = 3.0   # Minimum seconds between blinks
+    max_interval_seconds: float = 8.0   # Maximum seconds between blinks
+    long_blink_chance: float = 0.2      # Probability of a slow blink (vs quick)
+
+
+@dataclass
 class RuntimeConfig:
     """Configuration for the main agent loop."""
     decision_loop_interval_seconds: float = 1.0   # Minimum time between LLM calls
@@ -108,6 +117,7 @@ class RobotConfig:
     decision_api: DecisionAPIConfig = field(default_factory=DecisionAPIConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
+    idle_blink: IdleBlinkConfig = field(default_factory=IdleBlinkConfig)
 
     @classmethod
     def from_yaml(cls, path: str) -> "RobotConfig":
