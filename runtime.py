@@ -284,7 +284,7 @@ class RobotRuntime:
         # Play startup sound if enabled.
         if self.config.audio.enabled and self.config.audio.startup_sound:
             from utils.audio import play_sound
-            play_sound(self.config.audio.startup_sound)
+            play_sound(self.config.audio.startup_sound, device=self.config.audio.device)
 
     def _handle_shutdown_signal(self) -> None:
         """Signal handler: request graceful shutdown."""

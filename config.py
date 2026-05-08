@@ -40,7 +40,7 @@ class MicrophoneConfig:
     device_index: Optional[int] = None       # None = system default
     sample_rate: int = 16000
     chunk_duration_seconds: float = 3.0      # Audio chunk size sent to STT API
-    channels: int = 1
+    channels: int = 2                        # WM8960 usually requires stereo (2 channels)
 
 
 @dataclass
@@ -91,6 +91,7 @@ class IdleBlinkConfig:
 class AudioConfig:
     """Configuration for sound effects."""
     enabled: bool = True
+    device: str = "default"                 # ALSA device name (e.g. "hw:0,0" or "plughw:0,0")
     startup_sound: str = "sounds/startup.mp3"
     blink_sound: str = "sounds/blink.wav"
 

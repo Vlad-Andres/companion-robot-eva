@@ -8,7 +8,7 @@ from utils.logger import get_logger
 
 log = get_logger(__name__)
 
-def play_sound(file_path: str) -> None:
+def play_sound(file_path: str, device: str = "default") -> None:
     """
     Play a sound file (.wav or .mp3).
     
@@ -17,6 +17,7 @@ def play_sound(file_path: str) -> None:
     
     Args:
         file_path: Path to the audio file.
+        device:    ALSA device name (default: "default").
     """
     if not file_path:
         return
@@ -28,9 +29,10 @@ def play_sound(file_path: str) -> None:
     ext = os.path.splitext(file_path)[1].lower()
     
     if ext == ".wav":
-        cmd = ["aplay", file_path]
+        cmd = ["aplay", "-D", device, file_path]
     elif ext == ".mp3":
-        cmd = ["mpg123", "-q", file_path]
+        # mpg123 uses -a for audio device
+        cmd = ["mpg123", "-q", "-a", device, file_path]
     else:
         log.warning("Unsupported audio format: %s", ext)
         return
