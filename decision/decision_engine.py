@@ -22,6 +22,7 @@ from config import DecisionAPIConfig
 from core.context_manager import ContextManager
 from core.event_bus import Event, EventBus
 from decision.context_builder import ContextBuilder
+from utils.http_client import join_url, post_json
 from utils.logger import get_logger
 from utils.retry import async_retry
 
@@ -190,18 +191,11 @@ class DecisionEngine:
         Returns:
             Parsed JSON response dict containing "actions" list.
 
-        TODO: Implement actual HTTP POST using aiohttp or httpx.
-              The payload should be sent as JSON.
-              Example:
-                  url = self.config.base_url + self.config.endpoint
-                  async with aiohttp.ClientSession() as session:
-                      async with session.post(
-                          url,
-                          json=payload,
-                          timeout=self.config.timeout_seconds,
-                      ) as resp:
-                          return await resp.json()
         """
-        # TODO: implement
-        log.debug("Decision LLM API not yet implemented — returning empty actions.")
-        return {"actions": []}
+        url = join_url(self.config.base_url, self.config.endpoint)
+        data = await post_json(
+            url=url,
+            payload=payload,
+            timeout_seconds=self.config.timeout_seconds,
+        )
+        return data if isinstance(data, dict) else {"actions": []}

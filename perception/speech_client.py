@@ -15,16 +15,37 @@ Published events:
 from __future__ import annotations
 
 import asyncio
+import math
+import struct
 from typing import Optional
 
 from config import SpeechAPIConfig
 from core.context_manager import ContextManager
 from core.event_bus import Event, EventBus
 from perception.base_perception import BasePerceptionClient
+from utils.http_client import join_url, post_bytes_for_json
 from utils.logger import get_logger
 from utils.retry import async_retry
 
 log = get_logger(__name__)
+
+
+def _pcm16le_rms(data: bytes) -> Optional[float]:
+    if not data:
+        return None
+    if len(data) < 2:
+        return None
+    if len(data) % 2 == 1:
+        data = data[:-1]
+
+    total = 0.0
+    count = 0
+    for (sample,) in struct.iter_unpack("<h", data):
+        total += float(sample * sample)
+        count += 1
+    if count == 0:
+        return None
+    return math.sqrt(total / count)
 
 
 class SpeechClient(BasePerceptionClient):
@@ -121,17 +142,23 @@ class SpeechClient(BasePerceptionClient):
         Returns:
             Transcribed text string, or None/empty string if nothing was spoken.
 
-        TODO: Implement actual HTTP POST using aiohttp or httpx.
-              Example:
-                  async with aiohttp.ClientSession() as session:
-                      async with session.post(
-                          url, data=audio_chunk,
-                          headers={"Content-Type": "audio/pcm"},
-                          timeout=self.config.timeout_seconds,
-                      ) as resp:
-                          data = await resp.json()
-                          return data.get("text", "")
+        Expected request:
+            POST <base_url><endpoint> with raw PCM bytes.
+            Content-Type: audio/pcm (adjust if your API expects WAV/FLAC/etc.)
         """
-        # TODO: implement
-        log.debug("Speech API call not yet implemented — returning empty.")
-        return ""
+        if not audio_chunk:
+            return ""
+
+        rms = _pcm16le_rms(audio_chunk)
+        if rms is not None and rms < 200:
+            return ""
+
+        url = join_url(self.config.base_url, self.config.endpoint)
+        data = await post_bytes_for_json(
+            url=url,
+            payload=audio_chunk,
+            content_type="audio/pcm",
+            timeout_seconds=self.config.timeout_seconds,
+        )
+        text = data.get("text")
+        return text if isinstance(text, str) else ""

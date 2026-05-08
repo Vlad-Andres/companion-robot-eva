@@ -21,6 +21,7 @@ from config import VisionAPIConfig
 from core.context_manager import ContextManager, DetectedObject
 from core.event_bus import Event, EventBus
 from perception.base_perception import BasePerceptionClient
+from utils.http_client import join_url, post_bytes_for_json
 from utils.logger import get_logger
 from utils.retry import async_retry
 
@@ -128,17 +129,21 @@ class VisionClient(BasePerceptionClient):
         Returns:
             List of DetectedObject instances.
 
-        TODO: Implement actual HTTP POST using aiohttp or httpx.
-              Encode frame as JPEG bytes before sending.
-              Example:
-                  async with aiohttp.ClientSession() as session:
-                      async with session.post(url, data=payload, timeout=...) as resp:
-                          data = await resp.json()
-                          return self._parse_response(data)
         """
-        # TODO: implement API call
-        log.debug("Vision API call not yet implemented — returning empty list.")
-        return []
+        if isinstance(frame, bytes):
+            payload = frame
+            content_type = "application/octet-stream"
+        else:
+            raise TypeError("Vision frame must be bytes (JPEG/PNG recommended)")
+
+        url = join_url(self.config.base_url, self.config.endpoint)
+        data = await post_bytes_for_json(
+            url=url,
+            payload=payload,
+            content_type=content_type,
+            timeout_seconds=self.config.timeout_seconds,
+        )
+        return self._parse_response(data)
 
     def _parse_response(self, data: dict) -> List[DetectedObject]:
         """
