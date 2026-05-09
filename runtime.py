@@ -118,6 +118,7 @@ class RobotRuntime:
         self._eye_last_change: float = 0.0
         self._eye_reset_task: asyncio.Task | None = None
         self._backend_feedback_lock = asyncio.Lock()
+        self._backend_audio_playback_lock = asyncio.Lock()
         self._backend_feedback_busy_until: float = 0.0
         self._listening_side: int = 0
         self._thinking_task: asyncio.Task | None = None
@@ -336,15 +337,31 @@ class RobotRuntime:
         if not await self._try_reserve_backend_feedback(duration_seconds=2.5):
             return
 
-        eyes_log.info("backend_audio bytes=%d", len(audio_bytes))
-        self._cancel_thinking()
-        await self.action_dispatcher.dispatch_raw(
-            [{"type": "set_eye_expression", "payload": {"expression": "happy"}}]
-        )
+        async with self._backend_audio_playback_lock:
+            eyes_log.info("backend_audio bytes=%d", len(audio_bytes))
+            self._cancel_thinking()
+            await self.action_dispatcher.dispatch_raw(
+                [{"type": "set_eye_expression", "payload": {"expression": "happy"}}]
+            )
 
-        from utils.audio import play_wav_bytes
+            await self.event_bus.publish(
+                Event(topic="perception.backend_audio_playing", data=None, source="runtime")
+            )
+            try:
+                from utils.audio import play_wav_bytes_blocking
 
-        play_wav_bytes(bytes(audio_bytes), device=self.config.audio.device)
+                await asyncio.to_thread(
+                    play_wav_bytes_blocking,
+                    bytes(audio_bytes),
+                    device=self.config.audio.device,
+                    volume_percent=self.config.audio.volume_percent,
+                    mixer_control=self.config.audio.mixer_control,
+                    mixer_card=self.config.audio.mixer_card,
+                )
+            finally:
+                await self.event_bus.publish(
+                    Event(topic="perception.backend_audio_done", data=None, source="runtime")
+                )
 
     async def _on_backend_listening(self, _event: Event) -> None:
         if time.monotonic() < self._backend_feedback_busy_until:
@@ -442,7 +459,13 @@ class RobotRuntime:
         # Play startup sound if enabled.
         if self.config.audio.enabled and self.config.audio.startup_sound:
             from utils.audio import play_sound
-            play_sound(self.config.audio.startup_sound, device=self.config.audio.device)
+            play_sound(
+                self.config.audio.startup_sound,
+                device=self.config.audio.device,
+                volume_percent=self.config.audio.volume_percent,
+                mixer_control=self.config.audio.mixer_control,
+                mixer_card=self.config.audio.mixer_card,
+            )
 
     def _handle_shutdown_signal(self) -> None:
         """Signal handler: request graceful shutdown."""

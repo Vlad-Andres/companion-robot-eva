@@ -127,7 +127,13 @@ class EyeExpressionHandler(BaseActionHandler):
         """Helper to play the blink sound if enabled."""
         if self._audio and self._audio.enabled and self._audio.blink_sound:
             from utils.audio import play_sound
-            play_sound(self._audio.blink_sound, device=self._audio.device)
+            play_sound(
+                self._audio.blink_sound,
+                device=self._audio.device,
+                volume_percent=self._audio.volume_percent,
+                mixer_control=self._audio.mixer_control,
+                mixer_card=self._audio.mixer_card,
+            )
 
 
 class EyeAnimationHandler(BaseActionHandler):
@@ -183,4 +189,10 @@ class EyeAnimationHandler(BaseActionHandler):
         """Helper to play the blink sound if enabled."""
         if self._audio and self._audio.enabled and self._audio.blink_sound:
             from utils.audio import play_sound
-            play_sound(self._audio.blink_sound, device=self._audio.device)
+            play_sound(
+                self._audio.blink_sound,
+                device=self._audio.device,
+                volume_percent=self._audio.volume_percent,
+                mixer_control=self._audio.mixer_control,
+                mixer_card=self._audio.mixer_card,
+            )

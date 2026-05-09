@@ -78,7 +78,7 @@ class EyeController:
 
         # Eye geometry
         self.w: int = 38
-        self.h: int = 24
+        self.h: int = 20
         self.space: int = 16
         self.rad: int = 8
         self.lx: int = 64 - (self.space // 2) - (self.w // 2)
@@ -120,15 +120,15 @@ class EyeController:
                 for x in [lx, rx]:
                     left = x - (self.w // 2) + 3
                     right = x + (self.w // 2) - 3
-                    y = 4
-                    d.line([(left, y + 2), (x, y), (right, y + 2)], fill="white", width=1)
+                    y = 0
+                    d.line([(left, y), (x, y), (right, y)], fill="white", width=1)
             elif brow == "furrowed":
                 for x in [lx, rx]:
                     left = x - (self.w // 2) + 3
                     right = x + (self.w // 2) - 3
                     y = 4
-                    d.line([(left, y), (x - 2, y + 2)], fill="white", width=1)
-                    d.line([(right, y), (x + 2, y + 2)], fill="white", width=1)
+                    d.line([(left, y), (x, y - 4), (right, y)], fill="white", width=1)
+
 
     def clear(self) -> None:
         """Clear the display (blank screen)."""

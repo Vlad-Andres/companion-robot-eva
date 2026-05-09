@@ -70,11 +70,15 @@ class SpeechClient(BasePerceptionClient):
         self._last_listening_event_at: float = 0.0
         self._awaiting_backend: bool = False
         self._waiting_task: Optional[asyncio.Task] = None
+        self._send_allowed = asyncio.Event()
+        self._send_allowed.set()
 
     async def start(self) -> None:
         """Subscribe to events and start the connection manager."""
         if self.config.enabled:
             self.event_bus.subscribe("sensor.audio", self.process)
+            self.event_bus.subscribe("perception.backend_audio_playing", self._on_backend_audio_playing)
+            self.event_bus.subscribe("perception.backend_audio_done", self._on_backend_audio_done)
             # The manager owns the full lifecycle of the connection
             self._manager_task = asyncio.create_task(self._connection_manager())
             log.info("SpeechClient started (Best-practice WebSocket mode).")
@@ -84,6 +88,8 @@ class SpeechClient(BasePerceptionClient):
     async def stop(self) -> None:
         """Unsubscribe and stop the manager."""
         self.event_bus.unsubscribe("sensor.audio", self.process)
+        self.event_bus.unsubscribe("perception.backend_audio_playing", self._on_backend_audio_playing)
+        self.event_bus.unsubscribe("perception.backend_audio_done", self._on_backend_audio_done)
         if self._manager_task:
             self._manager_task.cancel()
             try:
@@ -134,6 +140,7 @@ class SpeechClient(BasePerceptionClient):
     async def _producer_loop(self) -> None:
         """Pulls audio chunks from the outbox queue and sends them."""
         while True:
+            await self._send_allowed.wait()
             chunk = await self._outbox.get()
             if self._ws:
                 try:
@@ -147,6 +154,21 @@ class SpeechClient(BasePerceptionClient):
                     log.error("Failed to send chunk: %s", e)
                     raise
             self._outbox.task_done()
+
+    def _drain_outbox(self) -> None:
+        while True:
+            try:
+                self._outbox.get_nowait()
+                self._outbox.task_done()
+            except asyncio.QueueEmpty:
+                return
+
+    async def _on_backend_audio_playing(self, _event: Event) -> None:
+        self._send_allowed.clear()
+        self._drain_outbox()
+
+    async def _on_backend_audio_done(self, _event: Event) -> None:
+        self._send_allowed.set()
 
     async def _emit_waiting(self) -> None:
         try:
@@ -193,6 +215,9 @@ class SpeechClient(BasePerceptionClient):
 
     async def process(self, event: Event) -> None:
         """Handle a sensor.audio event by putting it in the outbox."""
+        if not self._send_allowed.is_set():
+            return
+
         audio_chunk = event.data
         if audio_chunk is None:
             return

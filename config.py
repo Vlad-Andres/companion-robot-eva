@@ -92,6 +92,9 @@ class AudioConfig:
     """Configuration for sound effects."""
     enabled: bool = True
     device: str = "default"                 # ALSA device name (e.g. "hw:0,0" or "plughw:0,0")
+    mixer_card: int | None = None
+    mixer_control: str = "Master"
+    volume_percent: int = 5
     startup_sound: str = "sounds/startup.mp3"
     blink_sound: str = "sounds/blink.wav"
 
