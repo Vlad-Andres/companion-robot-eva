@@ -1,29 +1,54 @@
-# STT API Server
+# Robot Backend (REST + WebSocket)
 
-This folder contains a simple Flask-based API to receive audio from the robot and return transcribed text.
+This backend receives audio over WebSocket, performs STT, and emits structured robot commands grouped by action type (speak/move/go_to/etc.). It also exposes a small REST API for discovery (supported actions, protocol version).
 
-## How to use on your local computer:
+## Run
 
-1. **Move this folder** to your computer.
-2. **Create a virtual environment**:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. **Run the server**:
-   ```bash
-   python app.py
-   ```
-5. **Update Robot Config**:
-   On your robot, update the `SpeechAPIConfig` in `config.py` to point to your computer's IP address:
-   ```python
-   # Example:
-   base_url: str = "http://192.168.1.50:8002" 
-   ```
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+uvicorn robot_backend.asgi:app --host 0.0.0.0 --port 8002
+```
 
-## Note on Transcription
-The current `app.py` is a **stub**. It returns "hello robot" for every audio chunk. To make it real, you should integrate a library like `openai-whisper` or `vosk` inside the `transcribe()` function in `app.py`.
+## REST API
+
+- `GET /health`
+- `GET /v1/protocol`
+- `GET /v1/actions`
+
+## WebSocket API
+
+- Endpoint: `ws://<host>:8002/v1/ws/audio`
+- Transport:
+  - Binary frames: raw audio chunks (default: PCM S16LE mono 16kHz)
+  - Text frames: JSON control messages (protocol `robot-backend/1`)
+
+### Minimal client flow
+
+1. Connect to `/v1/ws/audio`
+2. Send audio chunks as binary frames
+3. Send `{"type":"audio.end","utterance_id":"<id>"}` as a text frame to finalize immediately (otherwise idle timeout finalizes)
+4. Receive:
+   - `{"type":"asr.final", ...}`
+   - `{"type":"cmd","cmd":{"name":"move_base","group":"move","args":{...}}}`
+   - `{"type":"cmd","cmd":{"name":"speak","group":"speak","args":{...}}}`
+   - `{"type":"memory.suggest","items":[...]}` for robot-side memory storage
+
+## Configuration
+
+Environment variables:
+
+- `ROBOT_BACKEND_PORT` (default `8002`)
+- `ROBOT_BACKEND_AUDIO_IDLE_SECONDS` (default `0.9`)
+- `ROBOT_BACKEND_AUDIO_MAX_BYTES` (default `2000000`)
+- `ROBOT_BACKEND_STT_STUB_TEXT` (set to force a deterministic transcript for testing)
+- `ROBOT_BACKEND_LLM_ENABLED` (default `false`)
+- `ROBOT_BACKEND_OLLAMA_BASE_URL` / `ROBOT_BACKEND_OLLAMA_MODEL`
+- `ROBOT_BACKEND_TTS_ENABLED` (default `true`)
+
+## Tests
+
+```bash
+pytest -q
+```

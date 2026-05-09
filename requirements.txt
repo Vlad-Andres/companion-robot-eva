@@ -1,5 +1,7 @@
-flask
+fastapi
+uvicorn
+websockets
 numpy
-# Add your preferred STT engine, for example:
-# openai-whisper
-# vosk
+pytest
+pytest-asyncio
+httpx
