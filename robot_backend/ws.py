@@ -81,6 +81,7 @@ async def _finalize_utterance(session: WsSession, ws: WebSocket, utterance_id: s
             continue
         cmd_id = new_id("cmd")
         await _send_json(ws, command_message(cmd_id=cmd_id, name=name, group=group, args=args, requires_ack=True, session_id=session.session_id))
+        session.ignore_until = max(session.ignore_until, time.monotonic() + 1.0)
 
     if plan.llm_user_text is not None and session.settings.llm_enabled:
         req_id = new_id("llm")
@@ -95,6 +96,7 @@ async def _finalize_utterance(session: WsSession, ws: WebSocket, utterance_id: s
             if wav:
                 await ws.send_bytes(wav)
             await _send_json(ws, tts_end_message(tts_id=tts_id, session_id=session.session_id))
+            session.ignore_until = max(session.ignore_until, time.monotonic() + 1.5)
         await _send_json(ws, status_message(state="ready", session_id=session.session_id))
 
 
