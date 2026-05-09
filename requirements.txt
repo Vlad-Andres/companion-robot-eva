@@ -1,0 +1,5 @@
+flask
+numpy
+# Add your preferred STT engine, for example:
+# openai-whisper
+# vosk
