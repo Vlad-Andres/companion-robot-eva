@@ -82,8 +82,12 @@ robot/
 ├── behaviors/               # Autonomous reflex behaviors (Idle Blink)
 ├── display/                 # OLED eye animation controller
 ├── memory/                  # Short and long-term memory store
-└── utils/                   # Logging and retry helpers
+├── utils/                   # Logging and retry helpers
+└── backend/                 # Server-side brain (runs on the LAN host, e.g. a Mac mini):
+                             # FastAPI REST + WebSocket service doing STT, LLM planning and Piper TTS
 ```
+
+The robot runtime (everything above `backend/`) runs on the Raspberry Pi; `backend/` is deployed on a more powerful LAN machine. See [backend/README.md](backend/README.md) for its API and setup.
 
 ---
 
