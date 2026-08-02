@@ -1,47 +1,37 @@
 """
-perception/base_perception.py — Abstract base for perception API clients.
+perception/base_perception.py — Abstract base for perception clients.
 
-Perception clients subscribe to sensor events, forward data to an AI API,
-parse the structured response, update ContextManager, and re-publish
-the result on the EventBus.
+Perception clients subscribe to sensor events, forward data to the server,
+parse the response, and re-publish the result on the EventBus.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
 
-from core.context_manager import ContextManager
 from core.event_bus import Event, EventBus
 
 
 class BasePerceptionClient(ABC):
     """
-    Abstract base for AI perception API clients.
+    Abstract base for perception clients.
 
     Subclasses:
-        VisionClient  — subscribes to "sensor.vision" events.
-        SpeechClient  — subscribes to "sensor.audio" events.
+        SpeechClient — subscribes to "sensor.audio" events.
 
     Lifecycle:
         start() → subscribes to sensor topic, may start background tasks.
         stop()  → unsubscribes, cancels tasks, releases resources.
     """
 
-    name: str  # Unique service name, e.g. "vision_client".
+    name: str  # Unique service name, e.g. "speech_client".
 
-    def __init__(
-        self,
-        event_bus: EventBus,
-        context_manager: ContextManager,
-    ) -> None:
+    def __init__(self, event_bus: EventBus) -> None:
         """
         Args:
-            event_bus:       Shared EventBus for subscribe/publish.
-            context_manager: Shared ContextManager for state updates.
+            event_bus: Shared EventBus for subscribe/publish.
         """
         self.event_bus = event_bus
-        self.context = context_manager
 
     @abstractmethod
     async def start(self) -> None:
@@ -56,8 +46,8 @@ class BasePerceptionClient(ABC):
     @abstractmethod
     async def process(self, event: Event) -> None:
         """
-        Handle a sensor event: call the API, parse the result,
-        update context, and publish a perception event.
+        Handle a sensor event: forward it to the server and publish the
+        resulting perception event.
 
         Args:
             event: A sensor Event from the EventBus.

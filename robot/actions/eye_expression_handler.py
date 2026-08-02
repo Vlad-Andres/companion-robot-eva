@@ -54,20 +54,17 @@ class EyeExpressionHandler(BaseActionHandler):
 
     Dependencies:
         eye_controller: EyeController instance (from display/eye_controller.py).
-        context_manager: ContextManager for recording expression state.
     """
 
     action_type = ActionType.SET_EYE_EXPRESSION
 
-    def __init__(self, eye_controller=None, context_manager=None, audio_config=None) -> None:
+    def __init__(self, eye_controller=None, audio_config=None) -> None:
         """
         Args:
-            eye_controller:  EyeController instance.
-            context_manager: ContextManager for state updates.
-            audio_config:    AudioConfig for sound effects.
+            eye_controller: EyeController instance.
+            audio_config:   AudioConfig for sound effects.
         """
         self._eyes = eye_controller
-        self._context = context_manager
         self._audio = audio_config
 
     async def handle(self, action: Action) -> None:
@@ -117,11 +114,6 @@ class EyeExpressionHandler(BaseActionHandler):
         else:
             log.warning("EyeController not available — skipping display for '%s'.", expression)
 
-        # Always update context, even when display hardware is absent.
-        if self._context:
-            self._context.update_expression(expression)
-            self._context.record_action(ActionType.SET_EYE_EXPRESSION)
-
 
     def _play_blink_sound(self) -> None:
         """Helper to play the blink sound if enabled."""
@@ -148,9 +140,8 @@ class EyeAnimationHandler(BaseActionHandler):
 
     action_type = ActionType.PLAY_EYE_ANIMATION
 
-    def __init__(self, eye_controller=None, context_manager=None, audio_config=None) -> None:
+    def __init__(self, eye_controller=None, audio_config=None) -> None:
         self._eyes = eye_controller
-        self._context = context_manager
         self._audio = audio_config
 
     async def handle(self, action: Action) -> None:

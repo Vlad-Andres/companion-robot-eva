@@ -8,7 +8,7 @@ Blink interval is randomised within a configurable min/max range to feel
 natural rather than mechanical.
 
 The blink is dispatched through the normal EventBus → ActionDispatcher
-pipeline so it gets logged and tracked in ContextManager like any other action.
+pipeline so it gets logged like any other action.
 """
 
 from __future__ import annotations

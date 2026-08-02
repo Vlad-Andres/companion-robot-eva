@@ -1,15 +1,17 @@
 """
-perception/speech_client.py — Voice-to-text API client.
+perception/speech_client.py — WebSocket client for the server session.
 
-Subscribes to "sensor.audio" events.
-Sends audio chunks to the voice-to-text API.
-Parses transcribed text.
-Updates ContextManager and publishes "perception.speech" events.
+Subscribes to "sensor.audio" events and streams audio chunks to the server.
+Routes server replies (transcripts, commands, speech, audio) onto the bus.
 
-Published events:
-    topic:  "perception.speech"
-    data:   str — transcribed text
-    source: "speech_client"
+Published events (all with source "speech_client"):
+    perception.transcript        — str, final transcript of what Eva heard
+    perception.backend_command   — dict, one command envelope to execute
+    perception.backend_speech    — str, reply text the server is about to speak
+    perception.backend_audio     — bytes, synthesized WAV to play
+    perception.backend_do        — str, legacy plain-text command (mock server)
+    perception.backend_listening — None, audio is being streamed
+    perception.backend_waiting   — None, still waiting on the server
 """
 
 from __future__ import annotations
@@ -24,7 +26,6 @@ from typing import Optional
 import websockets
 
 from config import SpeechAPIConfig
-from core.context_manager import ContextManager
 from core.event_bus import Event, EventBus
 from perception.base_perception import BasePerceptionClient
 from utils.logger import get_logger
@@ -60,10 +61,9 @@ class SpeechClient(BasePerceptionClient):
     def __init__(
         self,
         event_bus: EventBus,
-        context_manager: ContextManager,
         config: SpeechAPIConfig,
     ) -> None:
-        super().__init__(event_bus, context_manager)
+        super().__init__(event_bus)
         self.config = config
         self._websocket: Optional[websockets.WebSocketClientProtocol] = None
         self._outbox: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)

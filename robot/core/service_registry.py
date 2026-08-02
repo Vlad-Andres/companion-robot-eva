@@ -57,8 +57,8 @@ class ServiceRegistry:
 
     Usage:
         registry = ServiceRegistry()
-        registry.register(camera_sensor)
-        registry.register(vision_client)
+        registry.register(microphone_sensor)
+        registry.register(speech_client)
         ...
         await registry.start_all()
         ...

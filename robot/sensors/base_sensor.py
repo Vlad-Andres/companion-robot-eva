@@ -22,7 +22,7 @@ class BaseSensor(ABC):
     Abstract base for all robot sensor adapters.
 
     Attributes:
-        name:      Unique sensor name string (e.g. "camera", "microphone").
+        name:      Unique sensor name string (e.g. "microphone").
         event_bus: Reference to the shared EventBus for publishing events.
     """
 

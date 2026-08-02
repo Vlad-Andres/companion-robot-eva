@@ -27,14 +27,6 @@ class DisplayConfig:
 
 
 @dataclass
-class CameraConfig:
-    """Configuration for the monochrome camera sensor."""
-    device_index: int = 0
-    capture_interval_seconds: float = 2.0   # How often to capture a frame
-    resolution: tuple[int, int] = (640, 480)
-
-
-@dataclass
 class MicrophoneConfig:
     """Configuration for audio capture."""
     device_index: Optional[int] = None
@@ -44,38 +36,12 @@ class MicrophoneConfig:
 
 
 @dataclass
-class VisionAPIConfig:
-    """Configuration for the object recognition API."""
-    base_url: str = "http://localhost:8001"
-    endpoint: str = "/recognize"
-    timeout_seconds: float = 5.0
-    enabled: bool = True
-
-
-@dataclass
 class SpeechAPIConfig:
     """Configuration for the speech WebSocket session on the server."""
     base_url: str = "http://192.168.1.4:8002"  # Your Mac's LAN IP — check with: ipconfig getifaddr en0
     endpoint: str = "/v1/websocket/audio"     # Must match the server's WebSocket route
     timeout_seconds: float = 30.0            # Increased to 30s for local speech-to-text
     enabled: bool = True
-
-
-@dataclass
-class DecisionAPIConfig:
-    """Configuration for the decision language model API."""
-    base_url: str = "http://localhost:8003"
-    endpoint: str = "/decide"
-    timeout_seconds: float = 15.0
-    max_history_turns: int = 10             # How many turns to include in context
-    enabled: bool = True
-
-
-@dataclass
-class MemoryConfig:
-    """Configuration for the memory store."""
-    short_term_capacity: int = 50           # Max events in short-term ring buffer
-    long_term_path: str = "memory.json"     # Path to persistent long-term store
 
 
 @dataclass
@@ -102,8 +68,7 @@ class AudioConfig:
 @dataclass
 class RuntimeConfig:
     """Configuration for the main agent loop."""
-    decision_loop_interval_seconds: float = 1.0   # Minimum time between language model calls
-    startup_animation: str = "WAKEUP"             # Eye animation on startup
+    startup_animation: str = "WAKEUP"   # Eye animation on startup
     log_level: str = "INFO"
 
 
@@ -122,12 +87,8 @@ class RobotConfig:
         config = RobotConfig.from_yaml(path) # from file
     """
     display: DisplayConfig = field(default_factory=DisplayConfig)
-    camera: CameraConfig = field(default_factory=CameraConfig)
     microphone: MicrophoneConfig = field(default_factory=MicrophoneConfig)
-    vision_api: VisionAPIConfig = field(default_factory=VisionAPIConfig)
     speech_api: SpeechAPIConfig = field(default_factory=SpeechAPIConfig)
-    decision_api: DecisionAPIConfig = field(default_factory=DecisionAPIConfig)
-    memory: MemoryConfig = field(default_factory=MemoryConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     idle_blink: IdleBlinkConfig = field(default_factory=IdleBlinkConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)

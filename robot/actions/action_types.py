@@ -1,8 +1,8 @@
 """
 actions/action_types.py — Typed action definitions.
 
-The decision language model returns a JSON list of action objects:
-    {"type": "speak", "payload": {"text": "..."}}
+Runtime handlers and behaviors dispatch action objects of the form:
+    {"type": "set_eye_expression", "payload": {"expression": "happy"}}
 
 This module defines:
   - ActionType enum: all valid action type strings
@@ -33,31 +33,15 @@ class ActionType(str, enum.Enum):
     """
     All supported action types.
 
-    The string value matches the "type" field in the language model response JSON.
+    The string value matches the "type" field of the dispatched action dict.
     """
-    SPEAK = "speak"
     SET_EYE_EXPRESSION = "set_eye_expression"
     PLAY_EYE_ANIMATION = "play_eye_animation"
-    # TODO: Add more action types as capabilities expand:
-    # PLAY_SOUND = "play_sound"
-    # MOVE_HEAD = "move_head"
-    # SHOW_TEXT = "show_text"
 
 
 # ---------------------------------------------------------------------------
 # Payload dataclasses — one per ActionType
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class SpeakPayload:
-    """
-    Payload for the SPEAK action.
-
-    Attributes:
-        text: The text the robot should speak aloud.
-    """
-    text: str
 
 
 @dataclass
@@ -94,12 +78,12 @@ class PlayEyeAnimationPayload:
 @dataclass
 class Action:
     """
-    A single structured action returned by the decision language model.
+    A single structured action to execute.
 
     Attributes:
         type:    ActionType string identifying which action to execute.
         payload: Typed payload dataclass for this action type.
-        raw:     Original raw dict from the language model, for debugging.
+        raw:     Original raw dict, for debugging.
     """
     type: str
     payload: Any
@@ -111,7 +95,6 @@ class Action:
 # ---------------------------------------------------------------------------
 
 _ACTION_REGISTRY: Dict[str, Type] = {
-    ActionType.SPEAK: SpeakPayload,
     ActionType.SET_EYE_EXPRESSION: SetEyeExpressionPayload,
     ActionType.PLAY_EYE_ANIMATION: PlayEyeAnimationPayload,
 }
@@ -124,11 +107,11 @@ _ACTION_REGISTRY: Dict[str, Type] = {
 
 def parse_action(raw: Dict[str, Any]) -> Action:
     """
-    Parse a raw action dict from the language model response into a typed Action.
+    Parse a raw action dict into a typed Action.
 
     Args:
         raw: A dict with at least "type" and optionally "payload".
-             Example: {"type": "speak", "payload": {"text": "Hello!"}}
+             Example: {"type": "set_eye_expression", "payload": {"expression": "happy"}}
 
     Returns:
         A fully typed Action instance.
@@ -138,9 +121,9 @@ def parse_action(raw: Dict[str, Any]) -> Action:
         TypeError:  If the payload fields don't match the expected dataclass.
 
     Example:
-        action = parse_action({"type": "speak", "payload": {"text": "Hi!"}})
-        # action.type == "speak"
-        # action.payload.text == "Hi!"
+        action = parse_action({"type": "set_eye_expression", "payload": {"expression": "happy"}})
+        # action.type == "set_eye_expression"
+        # action.payload.expression == "happy"
     """
     action_type = raw.get("type")
     if not action_type:

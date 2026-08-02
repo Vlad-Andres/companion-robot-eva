@@ -12,8 +12,8 @@ This is the single "god object" intentionally — it's the composition root
 that wires all loosely coupled components together.
 
 Data flow summary:
-    Sensors → EventBus → Perception → ContextManager
-    ContextManager → DecisionEngine → EventBus → ActionDispatcher → Handlers
+    Microphone → EventBus → SpeechClient → server (WebSocket)
+    server replies → EventBus → runtime handlers → ActionDispatcher → Handlers
 """
 
 from __future__ import annotations
@@ -24,10 +24,8 @@ import time
 
 from config import RobotConfig
 from core.action_dispatcher import ActionDispatcher
-from core.context_manager import ContextManager
 from core.event_bus import Event, EventBus
 from core.service_registry import ServiceRegistry
-from memory.memory_store import MemoryStore
 from utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -64,13 +62,6 @@ class RobotRuntime:
         # Core infrastructure
         # ------------------------------------------------------------------
         self.event_bus = EventBus()
-        self.context_manager = ContextManager(
-            max_history_turns=config.decision_api.max_history_turns
-        )
-        self.memory_store = MemoryStore(
-            capacity=config.memory.short_term_capacity,
-            long_term_path=config.memory.long_term_path,
-        )
         self.service_registry = ServiceRegistry()
         self.action_dispatcher = ActionDispatcher()
 
@@ -95,11 +86,6 @@ class RobotRuntime:
         self._register_perception_clients()
 
         # ------------------------------------------------------------------
-        # Decision engine
-        # ------------------------------------------------------------------
-        self._register_decision_engine()
-
-        # ------------------------------------------------------------------
         # Idle behaviors (autonomous reflex behavior)
         # ------------------------------------------------------------------
         self._register_idle_behaviors()
@@ -115,9 +101,6 @@ class RobotRuntime:
         self.event_bus.subscribe("perception.backend_listening", self._on_backend_listening)
         self.event_bus.subscribe("perception.backend_waiting", self._on_backend_waiting)
 
-        self._eye_current_expression: str = "neutral"
-        self._eye_last_change: float = 0.0
-        self._eye_reset_task: asyncio.Task | None = None
         self._backend_feedback_lock = asyncio.Lock()
         self._backend_audio_playback_lock = asyncio.Lock()
         self._backend_feedback_busy_until: float = 0.0
@@ -150,23 +133,17 @@ class RobotRuntime:
 
     def _register_action_handlers(self) -> None:
         """Register all action handlers with the ActionDispatcher."""
-        from actions.speak_handler import SpeakHandler
         from actions.eye_expression_handler import EyeAnimationHandler, EyeExpressionHandler
 
         self.action_dispatcher.register_handler(
-            SpeakHandler(context_manager=self.context_manager)
-        )
-        self.action_dispatcher.register_handler(
             EyeExpressionHandler(
                 eye_controller=self.eye_controller,
-                context_manager=self.context_manager,
                 audio_config=self.config.audio,
             )
         )
         self.action_dispatcher.register_handler(
             EyeAnimationHandler(
                 eye_controller=self.eye_controller,
-                context_manager=self.context_manager,
                 audio_config=self.config.audio,
             )
         )
@@ -174,12 +151,8 @@ class RobotRuntime:
 
     def _register_sensors(self) -> None:
         """Construct and register sensor services."""
-        from sensors.camera_sensor import CameraSensor
         from sensors.microphone_sensor import MicrophoneSensor
 
-        self.service_registry.register(
-            CameraSensor(self.event_bus, self.config.camera)
-        )
         self.service_registry.register(
             MicrophoneSensor(self.event_bus, self.config.microphone)
         )
@@ -188,27 +161,11 @@ class RobotRuntime:
     def _register_perception_clients(self) -> None:
         """Construct and register perception client services."""
         from perception.speech_client import SpeechClient
-        from perception.vision_client import VisionClient
 
         self.service_registry.register(
-            VisionClient(self.event_bus, self.context_manager, self.config.vision_api)
-        )
-        self.service_registry.register(
-            SpeechClient(self.event_bus, self.context_manager, self.config.speech_api)
+            SpeechClient(self.event_bus, self.config.speech_api)
         )
         log.debug("Perception client services registered.")
-
-    def _register_decision_engine(self) -> None:
-        """Construct and register the decision engine service."""
-        from decision.decision_engine import DecisionEngine
-
-        self.decision_engine = DecisionEngine(
-            self.event_bus,
-            self.context_manager,
-            self.config.decision_api,
-        )
-        self.service_registry.register(self.decision_engine)
-        log.debug("Decision engine registered.")
 
     def _register_idle_behaviors(self) -> None:
         """Register autonomous idle behaviours (e.g. periodic blinking)."""
@@ -232,7 +189,7 @@ class RobotRuntime:
 
     async def _on_decision_actions(self, event: Event) -> None:
         """
-        Called when the DecisionEngine publishes a "decision.actions" event.
+        Called when a behavior publishes a "decision.actions" event.
 
         Forwards the raw action list to the ActionDispatcher.
 
@@ -241,42 +198,6 @@ class RobotRuntime:
         """
         raw_actions = event.data or []
         await self.action_dispatcher.dispatch_raw(raw_actions)
-
-    async def _set_eye_expression(self, expression: str, min_interval_seconds: float = 1.0, force: bool = False) -> None:
-        expr = str(expression or "").strip().lower()
-        if not expr:
-            return
-
-        now = time.monotonic()
-        min_interval_seconds = max(1.0, float(min_interval_seconds))
-        if not force:
-            if expr == self._eye_current_expression:
-                return
-            if (now - self._eye_last_change) < min_interval_seconds:
-                return
-
-        self._eye_current_expression = expr
-        self._eye_last_change = now
-        eyes_log.info("set_eye_expression=%s", expr)
-        await self.action_dispatcher.dispatch_raw(
-            [{"type": "set_eye_expression", "payload": {"expression": expr}}]
-        )
-
-    def _schedule_eye_neutral(self, delay_seconds: float = 1.0) -> None:
-        if self._eye_reset_task and not self._eye_reset_task.done():
-            self._eye_reset_task.cancel()
-            eyes_log.debug("cancel_pending_neutral_reset")
-
-        eyes_log.debug("schedule_neutral_reset_in=%.2fs", delay_seconds)
-
-        async def _reset() -> None:
-            try:
-                await asyncio.sleep(delay_seconds)
-                await self._set_eye_expression("neutral", force=True)
-            except asyncio.CancelledError:
-                pass
-
-        self._eye_reset_task = asyncio.create_task(_reset())
 
     async def _try_reserve_backend_feedback(self, duration_seconds: float) -> bool:
         async with self._backend_feedback_lock:
@@ -309,9 +230,6 @@ class RobotRuntime:
         await self.action_dispatcher.dispatch_raw(
             [{"type": "set_eye_expression", "payload": {"expression": "curious"}}]
         )
-        await self.action_dispatcher.dispatch_raw(
-            [{"type": "speak", "payload": {"text": f"OK. {command}."}}]
-        )
 
     async def _on_backend_command(self, event: Event) -> None:
         """
@@ -332,10 +250,9 @@ class RobotRuntime:
             text = str(args.get("text") or "").strip()
             if not text:
                 return
-            log.info("Command speak: %r", text)
-            await self.action_dispatcher.dispatch_raw(
-                [{"type": "speak", "payload": {"text": text}}]
-            )
+            # No local TTS exists; audible replies arrive as server-synthesized
+            # WAV. Log so rule confirmations are visible during bring-up.
+            log.info("Command speak: %r (no local TTS — silent)", text)
             return
 
         if name == "move_base":
@@ -355,16 +272,14 @@ class RobotRuntime:
         if not text:
             return
 
-        if not await self._try_reserve_backend_feedback(duration_seconds=2.0):
-            return
-
+        # Deliberately no feedback reservation here: this event announces the
+        # reply text (speech.start), and the audible WAV follows moments later
+        # on backend_audio. Reserving a window here could make backend_audio
+        # drop the WAV when synthesis finishes inside it.
         eyes_log.info("backend_speech len=%d", len(text))
         self._cancel_thinking()
         await self.action_dispatcher.dispatch_raw(
             [{"type": "set_eye_expression", "payload": {"expression": "happy"}}]
-        )
-        await self.action_dispatcher.dispatch_raw(
-            [{"type": "speak", "payload": {"text": text}}]
         )
 
     async def _on_backend_audio(self, event: Event) -> None:
@@ -450,7 +365,6 @@ class RobotRuntime:
         Call with: asyncio.run(runtime.run())
         """
         log.info("Robot runtime starting up.")
-        self.memory_store.load()
 
         # Install signal handlers for graceful shutdown.
         loop = asyncio.get_running_loop()
@@ -515,7 +429,6 @@ class RobotRuntime:
         Graceful shutdown sequence:
           1. Stop all services.
           2. Clear the display.
-          3. Save memory.
         """
         log.info("Shutting down robot runtime...")
 
@@ -528,8 +441,5 @@ class RobotRuntime:
                 await loop.run_in_executor(None, self.eye_controller.clear)
             except Exception as exc:
                 log.warning("Could not clear eye display: %s", exc)
-
-        # Persist memory.
-        self.memory_store.save()
 
         log.info("Robot runtime shut down cleanly.")

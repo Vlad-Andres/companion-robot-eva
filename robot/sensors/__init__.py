@@ -1,1 +1,1 @@
-"""Sensor subsystem — camera and microphone input producers."""
+"""Sensor subsystem — hardware input producers (microphone)."""

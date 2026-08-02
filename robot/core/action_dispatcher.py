@@ -1,8 +1,8 @@
 """
 core/action_dispatcher.py — Validates and dispatches structured actions.
 
-The DecisionEngine produces a list of Action objects.
-The ActionDispatcher routes each action to its registered handler.
+Runtime handlers and behaviors produce lists of raw action dicts.
+The ActionDispatcher parses them and routes each action to its handler.
 
 New action types are added by:
   1. Defining a dataclass in actions/action_types.py
@@ -31,7 +31,6 @@ class ActionDispatcher:
 
     Usage:
         dispatcher = ActionDispatcher()
-        dispatcher.register_handler(SpeakHandler(text_to_speech_engine))
         dispatcher.register_handler(EyeExpressionHandler(eye_controller))
 
         await dispatcher.dispatch_all(actions)
@@ -99,10 +98,9 @@ class ActionDispatcher:
 
     async def dispatch_raw(self, raw_actions: List[dict]) -> None:
         """
-        Parse raw action dicts from the language model response and dispatch them.
+        Parse raw action dicts and dispatch them.
 
-        This is the main entry point called by DecisionEngine after
-        it receives the structured language model output.
+        This is the main entry point used by the runtime and behaviors.
 
         Args:
             raw_actions: List of raw dicts, each with at least a "type" key.

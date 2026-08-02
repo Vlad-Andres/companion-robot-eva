@@ -5,12 +5,10 @@ All inter-component communication flows through this bus.
 Producers publish events; consumers subscribe to topics.
 
 Well-known topics:
-    sensor.vision       — raw camera frame (bytes or numpy array)
-    sensor.audio        — raw audio chunk (bytes)
-    perception.objects  — list of DetectedObject from vision API
-    perception.speech   — transcribed text string from the speech-to-text API
-    decision.actions    — list of Action objects from decision language model
-    action.complete     — notification that an action finished executing
+    sensor.audio          — raw audio chunk (bytes) from the microphone
+    perception.transcript — final transcript string from the server
+    perception.backend_*  — server replies (see perception/speech_client.py)
+    decision.actions      — list of raw action dicts to dispatch
 
 Components subscribe by calling event_bus.subscribe(topic, callback).
 The callback is an async function: async def handler(event: Event) -> None.
@@ -56,14 +54,14 @@ class EventBus:
         bus = EventBus()
 
         # Subscribe
-        async def on_vision(event: Event):
-            frame = event.data
+        async def on_audio(event: Event):
+            chunk = event.data
             ...
 
-        bus.subscribe("sensor.vision", on_vision)
+        bus.subscribe("sensor.audio", on_audio)
 
         # Publish
-        await bus.publish(Event(topic="sensor.vision", data=frame, source="camera"))
+        await bus.publish(Event(topic="sensor.audio", data=chunk, source="microphone"))
     """
 
     def __init__(self) -> None:
