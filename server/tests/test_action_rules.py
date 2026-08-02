@@ -9,4 +9,5 @@ def test_normalize_text_basic() -> None:
 def test_match_action_turn_left() -> None:
     out = match_action_from_text("Turn left")
     assert out is not None
-    assert out["key"] == "turn_left"
+    assert out.key == "turn_left"
+    assert out.commands[1] == {"name": "move_base", "args": {"command": "turn_left"}}

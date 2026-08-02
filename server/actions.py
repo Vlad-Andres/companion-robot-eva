@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Optional
 
-from protocol import ActionGroup
+# The movement vocabulary, defined once. The JSON schema below and the
+# validation in validate_command() both read from it, so adding a movement
+# means editing this tuple alone.
+MOVE_COMMANDS = ("stop", "forward", "backward", "turn_left", "turn_right", "come_here")
 
 
 @dataclass(frozen=True)
 class ActionDefinition:
     name: str
-    group: ActionGroup
     args_schema: Dict[str, Any]
     description: str
 
@@ -17,71 +19,52 @@ class ActionDefinition:
 _ACTIONS: List[ActionDefinition] = [
     ActionDefinition(
         name="speak",
-        group="speak",
         args_schema={"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
         description="Speak the provided text.",
     ),
     ActionDefinition(
         name="move_base",
-        group="move",
         args_schema={
             "type": "object",
-            "properties": {"command": {"type": "string", "enum": ["stop", "forward", "backward", "turn_left", "turn_right", "come_here"]}},
+            "properties": {"command": {"type": "string", "enum": list(MOVE_COMMANDS)}},
             "required": ["command"],
         },
         description="Low-level base movement command.",
-    ),
-    ActionDefinition(
-        name="go_to",
-        group="go_to",
-        args_schema={
-            "type": "object",
-            "properties": {"target": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}},
-        },
-        description="Navigate to a named target or coordinates.",
-    ),
-    ActionDefinition(
-        name="memory_note",
-        group="memory",
-        args_schema={"type": "object", "properties": {"items": {"type": "array", "items": {"type": "object"}}}, "required": ["items"]},
-        description="Suggestion payload for the robot to store in memory later.",
     ),
 ]
 
 
 def list_actions() -> List[Dict[str, Any]]:
+    """The action registry, as served by GET /v1/actions."""
     return [
-        {"name": a.name, "group": a.group, "args_schema": a.args_schema, "description": a.description}
+        {"name": a.name, "args_schema": a.args_schema, "description": a.description}
         for a in _ACTIONS
     ]
 
 
-def action_group(name: str) -> Optional[ActionGroup]:
-    for a in _ACTIONS:
-        if a.name == name:
-            return a.group
-    return None
+def validate_command(command: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Check one {name, args} command against the registry.
 
-
-MoveCommand = Literal["stop", "forward", "backward", "turn_left", "turn_right", "come_here"]
-
-
-def command_from_rule_action(action: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    t = action.get("type")
-    payload = action.get("payload")
-    if not isinstance(payload, dict):
-        payload = {}
-
-    if t == "speak":
-        text = payload.get("text")
-        if isinstance(text, str) and text.strip():
-            return {"name": "speak", "group": "speak", "args": {"text": text.strip()}}
+    Returns the command with its arguments normalised, or None if the name is
+    unknown or the arguments don't fit. Everything sent to the robot passes
+    through here, so a malformed rule or model reply cannot reach the wire.
+    """
+    name = command.get("name")
+    args = command.get("args")
+    if not isinstance(name, str) or not isinstance(args, dict):
         return None
 
-    if t == "move_base":
-        command = payload.get("command")
-        if isinstance(command, str) and command in {"stop", "forward", "backward", "turn_left", "turn_right", "come_here"}:
-            return {"name": "move_base", "group": "move", "args": {"command": command}}
+    if name == "speak":
+        text = args.get("text")
+        if isinstance(text, str) and text.strip():
+            return {"name": "speak", "args": {"text": text.strip()}}
+        return None
+
+    if name == "move_base":
+        movement = args.get("command")
+        if isinstance(movement, str) and movement in MOVE_COMMANDS:
+            return {"name": "move_base", "args": {"command": movement}}
         return None
 
     return None

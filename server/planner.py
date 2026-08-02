@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from action_rules import match_action_from_text
-
-from actions import command_from_rule_action
+from actions import validate_command
 
 
 @dataclass(frozen=True)
@@ -19,30 +18,22 @@ class PlanResult:
 
 
 def plan_from_transcript(text: str) -> PlanResult:
+    """
+    Turn one transcript into commands, or hand it to the language model.
+
+    A matching rule wins outright; anything else becomes dialogue.
+    """
     rule = match_action_from_text(text)
-    commands: List[Dict[str, Any]] = []
-    memory_items: List[Dict[str, Any]] = []
-    rule_key: Optional[str] = None
+    if rule is None:
+        return PlanResult(commands=[], memory_items=[], language_model_input_text=text)
 
-    if isinstance(rule, dict):
-        key = rule.get("key")
-        if isinstance(key, str):
-            rule_key = key
-        actions = rule.get("actions")
-        if isinstance(actions, list):
-            for a in actions:
-                if isinstance(a, dict):
-                    command = command_from_rule_action(a)
-                    if command is not None:
-                        commands.append(command)
-
+    commands = [c for c in map(validate_command, rule.commands) if c is not None]
     if not commands:
         return PlanResult(commands=[], memory_items=[], language_model_input_text=text)
 
-    memory_items.append({"type": "utterance", "text": text})
     return PlanResult(
         commands=commands,
-        memory_items=memory_items,
+        memory_items=[{"type": "utterance", "text": text}],
         language_model_input_text=None,
-        rule_key=rule_key,
+        rule_key=rule.key,
     )

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
 PROTOCOL_ID = "eva/1"
 
@@ -20,13 +20,6 @@ def dumps_message(message: dict[str, Any]) -> str:
     return json.dumps(message, separators=(",", ":"), ensure_ascii=False)
 
 
-def loads_message(text: str) -> dict[str, Any]:
-    data = json.loads(text)
-    if not isinstance(data, dict):
-        raise ValueError("message must be an object")
-    return data
-
-
 def base_envelope(message_type: str, *, message_id: Optional[str] = None, session_id: Optional[str] = None) -> dict[str, Any]:
     out: dict[str, Any] = {"v": PROTOCOL_ID, "type": message_type, "ts_ms": now_ms()}
     if message_id is not None:
@@ -36,26 +29,15 @@ def base_envelope(message_type: str, *, message_id: Optional[str] = None, sessio
     return out
 
 
-ActionGroup = Literal["speak", "move", "go_to", "system", "memory"]
-
-
 def command_message(
     *,
     command_id: str,
     name: str,
-    group: ActionGroup,
     args: dict[str, Any],
-    requires_ack: bool = True,
     session_id: Optional[str] = None,
 ) -> dict[str, Any]:
     out = base_envelope("command", message_id=command_id, session_id=session_id)
-    out["command"] = {"id": command_id, "name": name, "group": group, "args": args, "requires_ack": requires_ack}
-    return out
-
-
-def ack_message(*, command_id: str, status: str, session_id: Optional[str] = None) -> dict[str, Any]:
-    out = base_envelope("command.ack", session_id=session_id)
-    out["ack"] = {"command_id": command_id, "status": status}
+    out["command"] = {"id": command_id, "name": name, "args": args}
     return out
 
 

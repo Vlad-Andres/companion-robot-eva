@@ -55,7 +55,6 @@ class WebSocketSession:
     audio_format: AudioFormat
     audio_queue: asyncio.Queue[bytes | _AudioEnd]
     audio_buffer: bytearray
-    last_received_at: float
     ignore_until: float
     running: bool
 
@@ -87,14 +86,9 @@ async def _finalize_utterance(session: WebSocketSession, websocket: WebSocket, u
     if plan.memory_items:
         await _send_json(websocket, memory_suggest_message(items=plan.memory_items, session_id=session.session_id))
 
+    # Commands arrive validated by the planner against the action registry.
     for command in plan.commands:
-        name = command.get("name")
-        group = command.get("group")
-        args = command.get("args")
-        if not isinstance(name, str) or not isinstance(group, str) or not isinstance(args, dict):
-            continue
-        command_id = new_id("command")
-        await _send_json(websocket, command_message(command_id=command_id, name=name, group=group, args=args, requires_ack=True, session_id=session.session_id))
+        await _send_json(websocket, command_message(command_id=new_id("command"), name=command["name"], args=command["args"], session_id=session.session_id))
         session.ignore_until = max(session.ignore_until, time.monotonic() + 1.0)
 
     if plan.language_model_input_text is not None and session.settings.language_model_enabled:
@@ -142,7 +136,6 @@ async def _audio_loop(session: WebSocketSession, websocket: WebSocket) -> None:
             continue
 
         session.audio_buffer.extend(item)
-        session.last_received_at = time.monotonic()
 
 
 async def run_websocket_session(websocket: WebSocket, *, settings: Settings, speech_to_text: SpeechToTextEngine, text_to_speech: TextToSpeechEngine, language_model: LanguageModelClient, dataset_recorder: DatasetRecorder) -> None:
@@ -157,7 +150,6 @@ async def run_websocket_session(websocket: WebSocket, *, settings: Settings, spe
         audio_format=AudioFormat(),
         audio_queue=asyncio.Queue(maxsize=256),
         audio_buffer=bytearray(),
-        last_received_at=time.monotonic(),
         ignore_until=0.0,
         running=True,
     )
@@ -214,8 +206,6 @@ async def run_websocket_session(websocket: WebSocket, *, settings: Settings, spe
                     ch = fmt.get("channels")
                     if isinstance(enc, str) and isinstance(sr, int) and isinstance(ch, int):
                         session.audio_format = AudioFormat(encoding=enc, sample_rate_hz=sr, channels=ch)
-                continue
-            if message_type == "command.ack":
                 continue
             if settings.legacy_text_commands:
                 continue

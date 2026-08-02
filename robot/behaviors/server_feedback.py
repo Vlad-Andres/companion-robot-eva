@@ -128,7 +128,7 @@ class ServerFeedbackService:
         """
         Execute one structured command from the server.
 
-        Envelope shape is defined in server/protocol.py: {name, group, args}.
+        Envelope shape is defined in server/protocol.py: {id, name, args}.
         """
         command = event.data
         if not isinstance(command, dict):

@@ -243,8 +243,6 @@ class SpeechClient(BasePerceptionClient):
                 await self.event_bus.publish(
                     Event(topic="perception.backend_command", data=command, source=self.name)
                 )
-                if command.get("requires_ack") and self._websocket:
-                    await self._send_ack(str(command.get("id") or ""))
             return
 
         if message_type == "transcript.final":
@@ -270,17 +268,6 @@ class SpeechClient(BasePerceptionClient):
 
         # hello, status, speech.end, memory.suggest, language_model.* — informational.
         log.debug("Server message: %s", message_type)
-
-    async def _send_ack(self, command_id: str) -> None:
-        if not command_id or not self._websocket:
-            return
-        try:
-            await self._websocket.send(
-                json.dumps({"v": "eva/1", "type": "command.ack",
-                            "ack": {"command_id": command_id, "status": "ok"}})
-            )
-        except Exception as exc:
-            log.debug("Could not acknowledge command %s: %s", command_id, exc)
 
     async def process(self, event: Event) -> None:
         """Handle a sensor.audio event by putting it in the outbox."""

@@ -44,100 +44,70 @@ def normalize_text(text: str) -> str:
 
 @dataclass(frozen=True)
 class ActionRule:
-    key: str
+    key: str          # Also the training label used by the dataset recorder.
     patterns: List[re.Pattern]
-    actions: List[Dict]
+    commands: List[Dict]   # Wire-shape {name, args} — see actions.py.
 
 
 _RULES: List[ActionRule] = [
     ActionRule(
         key="stop",
         patterns=[re.compile(r"\bstop\b")],
-        actions=[
-            {"type": "speak", "payload": {"text": "Stopping."}},
-            {"type": "move_base", "payload": {"command": "stop"}},
+        commands=[
+            {"name": "speak", "args": {"text": "Stopping."}},
+            {"name": "move_base", "args": {"command": "stop"}},
         ],
     ),
     ActionRule(
         key="move_forward",
-        patterns=[
-            re.compile(r"\bforward\b"),
-        ],
-        actions=[
-            {"type": "speak", "payload": {"text": "Moving forward."}},
-            {"type": "move_base", "payload": {"command": "forward"}},
+        patterns=[re.compile(r"\bforward\b")],
+        commands=[
+            {"name": "speak", "args": {"text": "Moving forward."}},
+            {"name": "move_base", "args": {"command": "forward"}},
         ],
     ),
     ActionRule(
         key="move_back",
-        patterns=[
-            re.compile(r"\bbackward\b"),
-        ],
-        actions=[
-            {"type": "speak", "payload": {"text": "Moving backward."}},
-            {"type": "move_base", "payload": {"command": "backward"}},
+        patterns=[re.compile(r"\bbackward\b")],
+        commands=[
+            {"name": "speak", "args": {"text": "Moving backward."}},
+            {"name": "move_base", "args": {"command": "backward"}},
         ],
     ),
     ActionRule(
         key="turn_left",
         patterns=[re.compile(r"\bturn\s+left\b")],
-        actions=[
-            {"type": "speak", "payload": {"text": "Turning left."}},
-            {"type": "move_base", "payload": {"command": "turn_left"}},
+        commands=[
+            {"name": "speak", "args": {"text": "Turning left."}},
+            {"name": "move_base", "args": {"command": "turn_left"}},
         ],
     ),
     ActionRule(
         key="turn_right",
         patterns=[re.compile(r"\bturn\s+right\b")],
-        actions=[
-            {"type": "speak", "payload": {"text": "Turning right."}},
-            {"type": "move_base", "payload": {"command": "turn_right"}},
+        commands=[
+            {"name": "speak", "args": {"text": "Turning right."}},
+            {"name": "move_base", "args": {"command": "turn_right"}},
         ],
     ),
     ActionRule(
         key="come_here",
         patterns=[re.compile(r"\bcome\s+here\b")],
-        actions=[
-            {"type": "speak", "payload": {"text": "Coming to you."}},
-            {"type": "move_base", "payload": {"command": "come_here"}},
+        commands=[
+            {"name": "speak", "args": {"text": "Coming to you."}},
+            {"name": "move_base", "args": {"command": "come_here"}},
         ],
     ),
 ]
 
 
-def match_action_from_text(text: str) -> Optional[Dict]:
+def match_action_from_text(text: str) -> Optional[ActionRule]:
     t = normalize_text(text)
     if not t:
         return None
 
     for rule in _RULES:
         if any(p.search(t) for p in rule.patterns):
-            return {"key": rule.key, "actions": rule.actions}
-
-    return None
-
-
-@dataclass(frozen=True)
-class IntentHint:
-    key: str
-    eye_expression: str
-
-
-def match_intent_hint_from_text(text: str) -> Optional[IntentHint]:
-    t = normalize_text(text)
-    if not t:
-        return None
-
-    tokens = set(t.split())
-
-    if "turn" in tokens and "left" not in tokens and "right" not in tokens:
-        return IntentHint(key="turn_pending", eye_expression="saccade")
-
-    if "move" in tokens or "go" in tokens or "drive" in tokens:
-        if "forward" not in tokens and "backward" not in tokens and "left" not in tokens and "right" not in tokens:
-            return IntentHint(key="move_pending", eye_expression="saccade")
-
-    if "come" in tokens and "here" not in tokens:
-        return IntentHint(key="come_pending", eye_expression="saccade")
+            return rule
 
     return None
