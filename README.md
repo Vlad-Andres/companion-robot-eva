@@ -58,7 +58,8 @@ robot/                 Raspberry Pi runtime
 ├── behaviors/         autonomous reflexes (idle blink)
 ├── display/           OLED eye animation controller
 ├── memory/            short and long term memory
-└── tools/             manual hardware diagnostics — run these by hand
+├── tools/             manual hardware diagnostics — run these by hand
+└── HARDWARE.md        wiring guide: pins, I2C addresses, bring-up checks
 
 server/                     Mac mini brain
 ├── asgi.py                 ASGI entry point (uvicorn asgi:app)
@@ -82,6 +83,7 @@ server/                     Mac mini brain
 - [Protocol](docs/protocol.md) — WebSocket and REST contract, message shapes, configuration
 - [Roadmap](docs/roadmap.md) — what's built, what's next, known gaps
 - [Training data](docs/training-data.md) — capturing labelled audio for the on-device intent model
+- [Wiring](robot/HARDWARE.md) — which component goes on which pin
 
 ## Extending
 
