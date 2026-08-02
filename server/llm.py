@@ -4,9 +4,9 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 
-from .log import logger
+from log import logger
 
-_log = logger("robot_backend.llm")
+_log = logger("eva.llm")
 
 
 class LlmClient:

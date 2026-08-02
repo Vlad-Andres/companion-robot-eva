@@ -1,0 +1,10 @@
+# Raspberry Pi runtime dependencies.
+# Install on the Pi:  pip install -r robot/requirements.txt
+
+luma.oled==3.15.0      # OLED eye display driver
+luma.core==2.5.3
+smbus2==0.6.1          # I2C transport for the display
+pillow==12.2.0         # Frame rendering for the eyes
+numpy==2.4.4           # Audio buffer maths
+pyaudio==0.2.14        # Microphone capture
+websockets==12.0       # Streaming link to the server

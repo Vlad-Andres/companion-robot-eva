@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Lightweight clone for the Raspberry Pi: checks out the robot client only.
-# Excludes backend/ from the working tree and, thanks to the blob filter,
-# never downloads backend blobs (including the ~63 MB Piper voice model).
+# Excludes server/ from the working tree and, thanks to the blob filter,
+# never downloads server blobs (including the ~63 MB Piper voice model).
 #
 # Usage: ./pi-clone.sh [repo-url] [target-dir]
 set -euo pipefail
@@ -11,8 +11,8 @@ TARGET_DIR="${2:-companion-robot-eva}"
 
 git clone --filter=blob:none --no-checkout "$REPO_URL" "$TARGET_DIR"
 cd "$TARGET_DIR"
-git sparse-checkout set --no-cone '/*' '!/backend/'
+git sparse-checkout set --no-cone '/*' '!/server/'
 git checkout main
 
 echo
-echo "Done. Working tree excludes backend/ and its blobs were never fetched."
+echo "Done. Working tree excludes server/ and its blobs were never fetched."

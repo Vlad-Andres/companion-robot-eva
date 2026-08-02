@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from action_rules import match_action_from_text
 
-from .actions import command_from_rule_action
+from actions import command_from_rule_action
 
 
 @dataclass(frozen=True)

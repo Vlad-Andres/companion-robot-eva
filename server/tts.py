@@ -7,9 +7,9 @@ import tempfile
 from dataclasses import dataclass
 from typing import Optional
 
-from .log import logger
+from log import logger
 
-_log = logger("robot_backend.tts")
+_log = logger("eva.tts")
 
 
 class TtsEngine:

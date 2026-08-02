@@ -1,158 +1,101 @@
-# Companion Robot — Agentic AI Runtime
+# Eva — companion robot
 
-An autonomous, agentic companion robot runtime built with a layered, event-driven architecture. The system is designed to perceive its environment via sensors, reason using locally-hosted AI models (LLMs, Vision, STT), and interact naturally with humans through speech and expressive animations.
-
-## 🚀 Key Features
-
-- **Event-Driven Architecture**: Decoupled sensor-perception-decision-action pipeline using an asynchronous event bus.
-- **Agentic Autonomy**: Continuously operates as a living agent, not just a request-response program.
-- **Local AI Integration**: Designed for locally-hosted vision recognition, voice-to-text, and decision-making LLMs.
-- **Modular Hardware Support**: Pluggable sensors and actuators with a uniform service lifecycle.
-- **Expressive Eyes**: Built-in OLED eye animation system for emotional feedback.
-- **Hybrid Memory**: Short-term context ring buffer combined with persistent long-term storage.
-
----
-
-## 🏗️ System Architecture
-
-The robot follows a cognitive pipeline: **Sensor → Perception → Context → Decision → Action**.
-
-```mermaid
-graph TD
-    subgraph Sensors
-        CAM[Camera Sensor]
-        MIC[Microphone Sensor]
-    end
-
-    BUS[Async Event Bus]
-
-    subgraph Perception
-        VIS[Vision Client]
-        SPH[Speech Client]
-    end
-
-    subgraph Core
-        CTX[Context Manager]
-        DEC[Decision Engine]
-        MEM[Memory Store]
-    end
-
-    subgraph Actuators
-        DSP[Action Dispatcher]
-        EYE[Eye Controller]
-        TTS[Speak Handler]
-    end
-
-    CAM & MIC -->|sensor.*| BUS
-    BUS -->|sensor.vision| VIS
-    BUS -->|sensor.audio| SPH
-
-    VIS -->|perception.objects| BUS
-    SPH -->|perception.speech| BUS
-
-    BUS -->|perception.*| CTX
-    CTX <--> DEC
-    DEC -->|decision.actions| BUS
-    BUS -->|decision.actions| DSP
-
-    DSP --> EYE
-    DSP --> TTS
-```
-
-### Why this architecture?
-
-- **Decoupling**: Sensors and actuators operate at different frequencies without blocking each other.
-- **Predictability**: The Decision LLM returns **structured action objects**, ensuring the robot only performs valid, safe behaviors.
-- **Single Source of Truth**: The `ContextManager` maintains all current state (seen objects, conversation history, internal mood).
-
----
-
-## 📂 Project Structure
+A companion robot that drives around, sees, listens and talks. It runs on two machines:
 
 ```
-robot/
-├── main.py                  # Entry point (config → runtime)
-├── runtime.py               # Central orchestrator & lifecycle manager
-├── config.py                # Typed configuration dataclasses
-├── core/                    # Event bus, context, and dispatch logic
-├── sensors/                 # Hardware sensor adapters (Camera, Mic)
-├── perception/              # AI API clients (Vision, Speech-to-Text)
-├── decision/                # LLM context builder & reasoning engine
-├── actions/                 # Structured action handlers (Speak, Eyes)
-├── behaviors/               # Autonomous reflex behaviors (Idle Blink)
-├── display/                 # OLED eye animation controller
-├── memory/                  # Short and long-term memory store
-├── utils/                   # Logging and retry helpers
-└── backend/                 # Server-side brain (runs on the LAN host, e.g. a Mac mini):
-                             # FastAPI REST + WebSocket service doing STT, LLM planning and Piper TTS
+robot/     → Raspberry Pi 4     sensors, motors, OLED eyes, speaker, reflexes
+server/    → Mac mini           speech recognition, language models, speech synthesis
 ```
 
-The robot runtime (everything above `backend/`) runs on the Raspberry Pi; `backend/` is deployed on a more powerful LAN machine. See [backend/README.md](backend/README.md) for its API and setup.
+They talk over a single WebSocket session on your local WiFi. The Pi stays deliberately thin — it
+captures audio, executes commands and handles reflexes, while everything expensive happens on the
+Mac. That's what keeps Eva responsive on battery power.
 
----
+Read [docs/architecture.md](docs/architecture.md) for the full picture and the system diagram.
 
-## 🛠️ Getting Started
+## Quick start
 
-### Prerequisites
-- Python 3.10+
-- `luma.oled` and `PIL` (for display support)
-- `asyncio`
+Everything runs through `make`. Run `make` on its own to see all targets.
 
-### Installation
+**On the Mac mini:**
 
-**On the Raspberry Pi (recommended):** use the lightweight clone script, which checks out only the robot client — `backend/` is excluded from the working tree and its blobs (including the ~63 MB TTS voice model) are never downloaded:
+```bash
+make setup-server && make server
+```
+
+The server listens on `:8002`. Check it with `curl localhost:8002/health`.
+
+**On the Raspberry Pi:**
+
+```bash
+make setup-robot && make robot
+```
+
+Point the Pi at your Mac by setting `speech_api.base_url` in [robot/config.py](robot/config.py).
+
+**No Mac handy?** `make mock` starts a fake server that cycles movement commands, so you can
+exercise the robot's eyes and command handling on its own.
+
+### Getting the code onto the Pi
+
+Use the sparse clone so the Pi never downloads the server or its ~63 MB voice model:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Vlad-Andres/companion-robot-eva/main/scripts/pi-clone.sh | bash
-cd companion-robot-eva
 ```
 
-**On a development machine / the backend host (full clone):**
+## Layout
 
-```bash
-git clone https://github.com/Vlad-Andres/companion-robot-eva.git
-cd companion-robot-eva
-# Recommended: create a virtual environment
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt  # If available
+```
+robot/                 Raspberry Pi runtime
+├── main.py            entry point
+├── runtime.py         composition root — wires every service together
+├── config.py          typed configuration dataclasses
+├── core/              event bus, context manager, service registry, dispatcher
+├── sensors/           camera and microphone adapters
+├── perception/        clients that talk to the server
+├── actions/           command handlers (speak, eye expression)
+├── behaviors/         autonomous reflexes (idle blink)
+├── display/           OLED eye animation controller
+├── memory/            short and long term memory
+└── tools/             manual hardware diagnostics — run these by hand
+
+server/                Mac mini brain
+├── asgi.py            ASGI entry point (uvicorn asgi:app)
+├── app.py             REST routes and WebSocket endpoint
+├── ws.py              session handling: audio in, commands out
+├── stt.py tts.py llm.py    speech recognition, synthesis, language model client
+├── planner.py         transcript → commands
+├── action_rules.py    fast-path phrase matching
+├── actions.py         action registry and argument schemas
+├── protocol.py        message envelopes
+├── voices/            Piper voice model
+└── tools/             mock server for robot-side testing
 ```
 
-### Running the Robot
-```bash
-python main.py
-```
+## Docs
 
-### Configuration
-Runtime parameters (API URLs, sensor intervals, hardware ports) are managed in `config.py`. You can also provide a YAML config (feature in progress).
+- [Architecture](docs/architecture.md) — the diagram, the command tiers, the design principles
+- [Protocol](docs/protocol.md) — WebSocket and REST contract, message shapes, configuration
+- [Roadmap](docs/roadmap.md) — what's built, what's next, known gaps
 
----
+## Extending
 
-## 🧩 Extensibility
-
-The system is designed for growth. Here is how to add new capabilities:
-
-| To add... | Do this |
+| To add… | Do this |
 |---|---|
-| **New Sensor** | Subclass `BaseSensor`, register in `runtime.py`, and publish to a new `sensor.*` topic. |
-| **New AI Model** | Subclass `BasePerceptionClient`, subscribe to a sensor topic, and update `ContextManager`. |
-| **New Action** | Add a type to `ActionType`, define a payload in `action_types.py`, and write a `BaseActionHandler`. |
-| **Autonomous Behavior** | Add a new service in `behaviors/` that publishes actions based on internal timers or sensor triggers. |
+| A sensor | Subclass `BaseSensor`, register it in `runtime.py`, publish to a `sensor.*` topic |
+| An action | Add it to `server/actions.py` with an arg schema, then write a handler in `robot/actions/` |
+| A behavior | Add a service in `robot/behaviors/` that publishes actions on its own timer |
+| A fast-path phrase | Add a rule in `server/action_rules.py` |
 
----
+Because the server builds the language models' output schema from the action registry, adding an
+action in one place makes it available to the models automatically.
 
-## 🗺️ Implementation Roadmap
+## Tests
 
-The current codebase is a fully functional architecture scaffold with hardware/API stubs.
+```bash
+make test
+```
 
-- [ ] **Camera Integration**: Implement OpenCV/picamera capture in `sensors/camera_sensor.py`.
-- [ ] **Audio Integration**: Implement PyAudio/sounddevice in `sensors/microphone_sensor.py`.
-- [ ] **Vision API**: Connect `perception/vision_client.py` to a local recognition model.
-- [ ] **Decision Brain**: Connect `decision/decision_engine.py` to a local LLM (e.g., Ollama/LM Studio).
-- [ ] **Speech Synthesis**: Implement TTS in `actions/speak_handler.py`.
-- [ ] **Vector Memory**: Upgrade `memory/memory_store.py` to use a vector database for semantic recall.
-
----
-
-## 📄 License
-Check the `LICENSE` file for details (default: MIT).
+Covers the server: REST routes, WebSocket audio handling and phrase matching. The scripts in
+`robot/tools/` are manual hardware checks, not automated tests — run them on the Pi by hand.

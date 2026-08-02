@@ -2,7 +2,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from robot_backend.app import create_app
+from app import create_app
 
 
 def _recv_until(ws, predicate, max_messages: int = 20):

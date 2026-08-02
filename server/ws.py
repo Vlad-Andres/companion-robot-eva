@@ -10,11 +10,11 @@ from typing import Any, Optional
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
 
-from .config import Settings
-from .llm import LlmClient
-from .log import logger
-from .planner import plan_from_transcript
-from .protocol import (
+from config import Settings
+from llm import LlmClient
+from log import logger
+from planner import plan_from_transcript
+from protocol import (
     asr_final_message,
     base_envelope,
     command_message,
@@ -28,10 +28,10 @@ from .protocol import (
     tts_end_message,
     tts_start_message,
 )
-from .stt import AudioFormat, SttEngine
-from .tts import TtsEngine
+from stt import AudioFormat, SttEngine
+from tts import TtsEngine
 
-_log = logger("robot_backend.ws")
+_log = logger("eva.ws")
 
 
 def _new_session_id() -> str:

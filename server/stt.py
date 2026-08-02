@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from .log import logger
+from log import logger
 
-_log = logger("robot_backend.stt")
+_log = logger("eva.stt")
 
 try:
     import numpy as _np

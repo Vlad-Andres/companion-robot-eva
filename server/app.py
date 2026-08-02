@@ -5,14 +5,14 @@ from typing import Any
 
 from fastapi import FastAPI, WebSocket
 
-from .actions import list_actions
-from .config import load_settings
-from .llm import build_default_llm_client
-from .log import configure_logging
-from .protocol import PROTOCOL_ID
-from .stt import build_default_stt_engine
-from .tts import build_default_tts_engine
-from .ws import run_ws_session
+from actions import list_actions
+from config import load_settings
+from llm import build_default_llm_client
+from log import configure_logging
+from protocol import PROTOCOL_ID
+from stt import build_default_stt_engine
+from tts import build_default_tts_engine
+from ws import run_ws_session
 
 
 def create_app() -> FastAPI:

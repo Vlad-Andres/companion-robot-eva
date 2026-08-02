@@ -1,0 +1,20 @@
+# Mac mini server dependencies.
+# Install on the server:  pip install -r server/requirements.txt
+
+fastapi                # REST + WebSocket app
+uvicorn                # ASGI server
+websockets             # WebSocket transport
+numpy                  # Audio buffer maths
+
+# --- Speech-to-text (optional: without it the server uses a stub transcript) ---
+faster-whisper         # STT engine used by stt.py
+
+# --- Tests ---
+pytest
+pytest-asyncio
+httpx
+
+# --- Not installable via pip ---
+# Piper TTS is an external binary invoked by tts.py. Install separately:
+#   brew install piper-tts     (or download a release binary)
+# The voice model itself ships in server/voices/.

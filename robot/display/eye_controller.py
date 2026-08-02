@@ -1,9 +1,6 @@
 """
 display/eye_controller.py — OLED eye animation controller.
 
-Migrated from eyes_animation.py and adapted for use as a reusable module.
-The __main__ block has been removed; EyeController is now purely importable.
-
 Used by:
   - actions/eye_expression_handler.py   (via action dispatch)
   - runtime.py                          (startup animation)

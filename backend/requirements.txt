@@ -1,7 +1,0 @@
-fastapi
-uvicorn
-websockets
-numpy
-pytest
-pytest-asyncio
-httpx
