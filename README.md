@@ -99,6 +99,16 @@ The robot runtime (everything above `backend/`) runs on the Raspberry Pi; `backe
 - `asyncio`
 
 ### Installation
+
+**On the Raspberry Pi (recommended):** use the lightweight clone script, which checks out only the robot client — `backend/` is excluded from the working tree and its blobs (including the ~63 MB TTS voice model) are never downloaded:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Vlad-Andres/companion-robot-eva/main/scripts/pi-clone.sh | bash
+cd companion-robot-eva
+```
+
+**On a development machine / the backend host (full clone):**
+
 ```bash
 git clone https://github.com/Vlad-Andres/companion-robot-eva.git
 cd companion-robot-eva
