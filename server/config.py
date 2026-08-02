@@ -68,6 +68,7 @@ class Settings:
     speech_to_text_stub_text: str
 
     text_to_speech_enabled: bool
+    text_to_speech_engine: str
     piper_model_path: str
     piper_config_path: str
 
@@ -93,6 +94,7 @@ def load_settings() -> Settings:
         speech_to_text_model=_env_str("EVA_SPEECH_TO_TEXT_MODEL", "small.en"),
         speech_to_text_stub_text=_env_str("EVA_SPEECH_TO_TEXT_STUB_TEXT", ""),
         text_to_speech_enabled=_env_bool("EVA_TEXT_TO_SPEECH_ENABLED", True),
+        text_to_speech_engine=_env_str("EVA_TEXT_TO_SPEECH_ENGINE", "auto"),
         piper_model_path=_env_str("EVA_PIPER_MODEL_PATH", "voices/en_GB-alba-medium.onnx"),
         piper_config_path=_env_str("EVA_PIPER_CONFIG_PATH", "voices/en_GB-alba-medium.onnx.json"),
         language_model_enabled=_env_bool("EVA_LANGUAGE_MODEL_ENABLED", False),

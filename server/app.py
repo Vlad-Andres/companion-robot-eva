@@ -23,7 +23,12 @@ def create_app() -> FastAPI:
         settings = load_settings()
         app.state.settings = settings
         app.state.speech_to_text = build_speech_to_text_engine(model_name=settings.speech_to_text_model, stub_text=settings.speech_to_text_stub_text)
-        app.state.text_to_speech = build_text_to_speech_engine(enabled=settings.text_to_speech_enabled, model_path=settings.piper_model_path, config_path=settings.piper_config_path)
+        app.state.text_to_speech = build_text_to_speech_engine(
+            enabled=settings.text_to_speech_enabled,
+            model_path=settings.piper_model_path,
+            config_path=settings.piper_config_path,
+            engine=settings.text_to_speech_engine,
+        )
         app.state.language_model = build_language_model_client(
             enabled=settings.language_model_enabled,
             base_url=settings.ollama_base_url,

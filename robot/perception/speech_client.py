@@ -15,6 +15,7 @@ Published events:
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import struct
 import time
@@ -199,18 +200,87 @@ class SpeechClient(BasePerceptionClient):
                 if not text:
                     continue
 
+                # Legacy plain-text protocol, still spoken by tools/mock_command_server.py.
                 if text.startswith("DO "):
                     command = text[3:].strip()
                     if command:
                         await self.event_bus.publish(
                             Event(topic="perception.backend_do", data=command, source=self.name)
                         )
-                else:
-                    await self.event_bus.publish(
-                        Event(topic="perception.backend_speech", data=text, source=self.name)
-                    )
+                    continue
+
+                if text.startswith("{"):
+                    await self._handle_envelope(text)
+                    continue
+
+                await self.event_bus.publish(
+                    Event(topic="perception.backend_speech", data=text, source=self.name)
+                )
             except Exception as e:
-                log.error("Error parsing speech-to-text response: %s", e)
+                log.error("Error handling server message: %s", e)
+
+    async def _handle_envelope(self, text: str) -> None:
+        """
+        Route one JSON message from the server.
+
+        Message shapes are defined in server/protocol.py. Anything unrecognised is
+        logged rather than spoken — without this, every envelope would fall through
+        to the speech path and Eva would read raw JSON aloud.
+        """
+        try:
+            message = json.loads(text)
+        except json.JSONDecodeError:
+            log.warning("Ignoring malformed JSON from server: %.80s", text)
+            return
+        if not isinstance(message, dict):
+            return
+
+        message_type = message.get("type")
+
+        if message_type == "command":
+            command = message.get("command")
+            if isinstance(command, dict):
+                await self.event_bus.publish(
+                    Event(topic="perception.backend_command", data=command, source=self.name)
+                )
+                if command.get("requires_ack") and self._websocket:
+                    await self._send_ack(str(command.get("id") or ""))
+            return
+
+        if message_type == "transcript.final":
+            heard = str(message.get("text") or "").strip()
+            if heard:
+                log.info("Heard: %r", heard)
+                await self.event_bus.publish(
+                    Event(topic="perception.transcript", data=heard, source=self.name)
+                )
+            return
+
+        if message_type == "speech.start":
+            spoken = str(message.get("speech", {}).get("text") or "").strip()
+            if spoken:
+                await self.event_bus.publish(
+                    Event(topic="perception.backend_speech", data=spoken, source=self.name)
+                )
+            return
+
+        if message_type == "error":
+            log.warning("Server error: %s", message.get("error"))
+            return
+
+        # hello, status, speech.end, memory.suggest, language_model.* — informational.
+        log.debug("Server message: %s", message_type)
+
+    async def _send_ack(self, command_id: str) -> None:
+        if not command_id or not self._websocket:
+            return
+        try:
+            await self._websocket.send(
+                json.dumps({"v": "eva/1", "type": "command.ack",
+                            "ack": {"command_id": command_id, "status": "ok"}})
+            )
+        except Exception as exc:
+            log.debug("Could not acknowledge command %s: %s", command_id, exc)
 
     async def process(self, event: Event) -> None:
         """Handle a sensor.audio event by putting it in the outbox."""

@@ -55,7 +55,7 @@ class VisionAPIConfig:
 @dataclass
 class SpeechAPIConfig:
     """Configuration for the speech WebSocket session on the server."""
-    base_url: str = "http://192.168.2.4:8002" # Updated to your computer's IP
+    base_url: str = "http://192.168.1.4:8002"  # Your Mac's LAN IP — check with: ipconfig getifaddr en0
     endpoint: str = "/v1/websocket/audio"     # Must match the server's WebSocket route
     timeout_seconds: float = 30.0            # Increased to 30s for local speech-to-text
     enabled: bool = True

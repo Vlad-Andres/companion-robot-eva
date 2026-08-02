@@ -109,6 +109,7 @@ class RobotRuntime:
         # ------------------------------------------------------------------
         self.event_bus.subscribe("decision.actions", self._on_decision_actions)
         self.event_bus.subscribe("perception.backend_do", self._on_backend_do)
+        self.event_bus.subscribe("perception.backend_command", self._on_backend_command)
         self.event_bus.subscribe("perception.backend_speech", self._on_backend_speech)
         self.event_bus.subscribe("perception.backend_audio", self._on_backend_audio)
         self.event_bus.subscribe("perception.backend_listening", self._on_backend_listening)
@@ -311,6 +312,43 @@ class RobotRuntime:
         await self.action_dispatcher.dispatch_raw(
             [{"type": "speak", "payload": {"text": f"OK. {command}."}}]
         )
+
+    async def _on_backend_command(self, event: Event) -> None:
+        """
+        Execute one structured command from the server.
+
+        Envelope shape is defined in server/protocol.py: {name, group, args}.
+        """
+        command = event.data
+        if not isinstance(command, dict):
+            return
+
+        name = str(command.get("name") or "")
+        args = command.get("args")
+        if not isinstance(args, dict):
+            args = {}
+
+        if name == "speak":
+            text = str(args.get("text") or "").strip()
+            if not text:
+                return
+            log.info("Command speak: %r", text)
+            await self.action_dispatcher.dispatch_raw(
+                [{"type": "speak", "payload": {"text": text}}]
+            )
+            return
+
+        if name == "move_base":
+            movement = str(args.get("command") or "")
+            # No motor handler exists yet; surface the command so it is visible
+            # during bring-up rather than silently dropped.
+            log.info("Command move_base: %s (no motor handler yet)", movement)
+            await self.action_dispatcher.dispatch_raw(
+                [{"type": "set_eye_expression", "payload": {"expression": "curious"}}]
+            )
+            return
+
+        log.warning("Unhandled command from server: %s args=%s", name, args)
 
     async def _on_backend_speech(self, event: Event) -> None:
         text = str(event.data or "").strip()
