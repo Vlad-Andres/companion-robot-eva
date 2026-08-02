@@ -31,7 +31,7 @@ class ActionDispatcher:
 
     Usage:
         dispatcher = ActionDispatcher()
-        dispatcher.register_handler(SpeakHandler(tts_engine))
+        dispatcher.register_handler(SpeakHandler(text_to_speech_engine))
         dispatcher.register_handler(EyeExpressionHandler(eye_controller))
 
         await dispatcher.dispatch_all(actions)
@@ -84,7 +84,7 @@ class ActionDispatcher:
         """
         Dispatch a list of actions sequentially.
 
-        Actions are executed in the order returned by the decision LLM.
+        Actions are executed in the order returned by the decision language model.
         Use sequential execution to preserve intent ordering
         (e.g. speak before changing expression).
 
@@ -99,10 +99,10 @@ class ActionDispatcher:
 
     async def dispatch_raw(self, raw_actions: List[dict]) -> None:
         """
-        Parse raw action dicts from the LLM response and dispatch them.
+        Parse raw action dicts from the language model response and dispatch them.
 
         This is the main entry point called by DecisionEngine after
-        it receives the structured LLM output.
+        it receives the structured language model output.
 
         Args:
             raw_actions: List of raw dicts, each with at least a "type" key.

@@ -30,7 +30,7 @@ class IdleBlinkService:
     Publishes a "decision.actions" event with a BLINK_SHORT or BLINK_LONG
     animation, which the ActionDispatcher routes to EyeAnimationHandler.
 
-    This runs independently of the decision LLM — it's pure reflex behaviour.
+    This runs independently of the decision language model — it's pure reflex behaviour.
 
     Configuration:
         min_interval: Minimum seconds between blinks.

@@ -1,7 +1,7 @@
 """
 actions/action_types.py — Typed action definitions.
 
-The decision LLM returns a JSON list of action objects:
+The decision language model returns a JSON list of action objects:
     {"type": "speak", "payload": {"text": "..."}}
 
 This module defines:
@@ -33,7 +33,7 @@ class ActionType(str, enum.Enum):
     """
     All supported action types.
 
-    The string value matches the "type" field in the LLM response JSON.
+    The string value matches the "type" field in the language model response JSON.
     """
     SPEAK = "speak"
     SET_EYE_EXPRESSION = "set_eye_expression"
@@ -94,12 +94,12 @@ class PlayEyeAnimationPayload:
 @dataclass
 class Action:
     """
-    A single structured action returned by the decision LLM.
+    A single structured action returned by the decision language model.
 
     Attributes:
         type:    ActionType string identifying which action to execute.
         payload: Typed payload dataclass for this action type.
-        raw:     Original raw dict from the LLM, for debugging.
+        raw:     Original raw dict from the language model, for debugging.
     """
     type: str
     payload: Any
@@ -124,7 +124,7 @@ _ACTION_REGISTRY: Dict[str, Type] = {
 
 def parse_action(raw: Dict[str, Any]) -> Action:
     """
-    Parse a raw action dict from the LLM response into a typed Action.
+    Parse a raw action dict from the language model response into a typed Action.
 
     Args:
         raw: A dict with at least "type" and optionally "payload".

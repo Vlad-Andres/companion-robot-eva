@@ -7,12 +7,12 @@ from fastapi import FastAPI, WebSocket
 
 from actions import list_actions
 from config import load_settings
-from llm import build_default_llm_client
+from language_model import build_language_model_client
 from log import configure_logging
 from protocol import PROTOCOL_ID
-from stt import build_default_stt_engine
-from tts import build_default_tts_engine
-from ws import run_ws_session
+from speech_to_text import build_speech_to_text_engine
+from text_to_speech import build_text_to_speech_engine
+from websocket_session import run_websocket_session
 
 
 def create_app() -> FastAPI:
@@ -21,10 +21,10 @@ def create_app() -> FastAPI:
         configure_logging()
         settings = load_settings()
         app.state.settings = settings
-        app.state.stt = build_default_stt_engine(model_name=settings.stt_model, stub_text=settings.stt_stub_text)
-        app.state.tts = build_default_tts_engine(enabled=settings.tts_enabled, model_path=settings.piper_model_path, config_path=settings.piper_config_path)
-        app.state.llm = build_default_llm_client(
-            enabled=settings.llm_enabled,
+        app.state.speech_to_text = build_speech_to_text_engine(model_name=settings.speech_to_text_model, stub_text=settings.speech_to_text_stub_text)
+        app.state.text_to_speech = build_text_to_speech_engine(enabled=settings.text_to_speech_enabled, model_path=settings.piper_model_path, config_path=settings.piper_config_path)
+        app.state.language_model = build_language_model_client(
+            enabled=settings.language_model_enabled,
             base_url=settings.ollama_base_url,
             model=settings.ollama_model,
             timeout_seconds=settings.ollama_timeout_seconds,
@@ -45,8 +45,8 @@ def create_app() -> FastAPI:
     async def actions() -> dict[str, Any]:
         return {"actions": list_actions()}
 
-    @app.websocket("/v1/ws/audio")
-    async def ws_audio(ws: WebSocket) -> None:
-        await run_ws_session(ws, settings=app.state.settings, stt=app.state.stt, tts=app.state.tts, llm=app.state.llm)
+    @app.websocket("/v1/websocket/audio")
+    async def websocket_audio(websocket: WebSocket) -> None:
+        await run_websocket_session(websocket, settings=app.state.settings, speech_to_text=app.state.speech_to_text, text_to_speech=app.state.text_to_speech, language_model=app.state.language_model)
 
     return app

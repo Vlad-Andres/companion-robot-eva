@@ -1,8 +1,8 @@
 """
-decision/context_builder.py — Assembles the context payload for the decision LLM.
+decision/context_builder.py — Assembles the context payload for the decision language model.
 
 Reads a snapshot from ContextManager and shapes it into the JSON structure
-that the decision LLM API expects.
+that the decision language model API expects.
 
 The payload format can be evolved here without touching other components.
 """
@@ -19,9 +19,9 @@ log = get_logger(__name__)
 
 class ContextBuilder:
     """
-    Constructs the context payload sent to the decision LLM.
+    Constructs the context payload sent to the decision language model.
 
-    The context payload gives the LLM everything it needs to decide
+    The context payload gives the language model everything it needs to decide
     what actions the robot should take:
       - perceived environment (objects, scene)
       - recent human speech
@@ -47,7 +47,7 @@ class ContextBuilder:
         Build and return the context payload dict.
 
         Returns:
-            A JSON-serialisable dict ready to send to the decision LLM API.
+            A JSON-serialisable dict ready to send to the decision language model API.
 
         Structure:
             {
@@ -65,7 +65,7 @@ class ContextBuilder:
                     ...
                 ],
                 "memory": [],                 # TODO: short/long-term memories
-                "instructions": "...",        # System prompt for the LLM (TODO)
+                "instructions": "...",        # System prompt for the language model (TODO)
             }
         """
         snapshot = self._context.snapshot()
@@ -107,13 +107,13 @@ class ContextBuilder:
 
     def _get_system_instructions(self) -> str:
         """
-        Return the system prompt that shapes the LLM's behaviour and output format.
+        Return the system prompt that shapes the language model's behaviour and output format.
 
         This prompt should:
           - Describe the robot's persona.
           - Specify the required structured output format.
           - List available action types and their payloads.
-          - Instruct the LLM to ONLY return valid JSON actions.
+          - Instruct the language model to ONLY return valid JSON actions.
 
         TODO: Load from a configurable prompt file or config field.
 

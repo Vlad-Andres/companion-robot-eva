@@ -296,20 +296,20 @@ class RobotRuntime:
         self._thinking_task = None
 
     async def _on_backend_do(self, event: Event) -> None:
-        cmd = str(event.data or "").strip()
-        if not cmd:
+        command = str(event.data or "").strip()
+        if not command:
             return
 
         if not await self._try_reserve_backend_feedback(duration_seconds=1.6):
             return
 
-        eyes_log.info("backend_do cmd=%s", cmd)
+        eyes_log.info("backend_do command=%s", command)
         self._cancel_thinking()
         await self.action_dispatcher.dispatch_raw(
             [{"type": "set_eye_expression", "payload": {"expression": "curious"}}]
         )
         await self.action_dispatcher.dispatch_raw(
-            [{"type": "speak", "payload": {"text": f"OK. {cmd}."}}]
+            [{"type": "speak", "payload": {"text": f"OK. {command}."}}]
         )
 
     async def _on_backend_speech(self, event: Event) -> None:

@@ -1,14 +1,14 @@
 """
-decision/decision_engine.py — Decision LLM integration and action generation.
+decision/decision_engine.py — Decision language model integration and action generation.
 
 The DecisionEngine is the robot's "brain":
   - Subscribes to perception events to know when to think.
-  - Uses ContextBuilder to prepare the LLM input payload.
-  - Calls the decision LLM API.
+  - Uses ContextBuilder to prepare the language model input payload.
+  - Calls the decision language model API.
   - Parses the structured action response.
   - Publishes "decision.actions" events for the ActionDispatcher.
 
-The engine runs on a minimum interval to prevent spamming the LLM.
+The engine runs on a minimum interval to prevent spamming the language model.
 It can also be triggered immediately on new speech input.
 """
 
@@ -42,7 +42,7 @@ class DecisionEngine:
       - Publishes "decision.actions" events containing a list of raw action dicts.
 
     Responsibilities:
-      - NOT deciding the content of actions (delegated to the LLM).
+      - NOT deciding the content of actions (delegated to the language model).
       - NOT executing actions (delegated to ActionDispatcher via EventBus).
     """
 
@@ -112,7 +112,7 @@ class DecisionEngine:
           - A speech trigger (immediate response)
           - The periodic interval (proactive behaviour)
 
-        On trigger, calls the LLM and dispatches the resulting actions.
+        On trigger, calls the language model and dispatches the resulting actions.
         """
         while True:
             try:
@@ -127,13 +127,13 @@ class DecisionEngine:
 
                 self._pending_trigger.clear()
 
-                # Enforce minimum interval between LLM calls.
+                # Enforce minimum interval between language model calls.
                 now = time.monotonic()
                 elapsed = now - self._last_decision_time
                 min_interval = self.config.timeout_seconds  # Reuse as min gap for now
                 # TODO: Use a dedicated config field: config.decision_min_interval_seconds
 
-                if elapsed < 1.0:  # Hard minimum: don't call LLM more than once/sec
+                if elapsed < 1.0:  # Hard minimum: don't call language model more than once/sec
                     await asyncio.sleep(1.0 - elapsed)
 
                 await self._run_decision_cycle()
@@ -149,7 +149,7 @@ class DecisionEngine:
         """
         Execute one full reasoning cycle:
           1. Build context payload.
-          2. Call decision LLM API.
+          2. Call decision language model API.
           3. Parse actions from response.
           4. Publish "decision.actions" event.
         """
@@ -158,21 +158,21 @@ class DecisionEngine:
 
         try:
             response = await async_retry(
-                self._call_llm_api,
+                self._call_language_model_api,
                 payload,
                 retries=2,
                 base_delay=1.0,
             )
         except Exception as exc:
-            log.error("Decision LLM API call failed: %s", exc)
+            log.error("Decision language model API call failed: %s", exc)
             return
 
         raw_actions = response.get("actions", [])
         if not raw_actions:
-            log.debug("Decision LLM returned no actions.")
+            log.debug("Decision language model returned no actions.")
             return
 
-        log.info("Decision LLM returned %d action(s).", len(raw_actions))
+        log.info("Decision language model returned %d action(s).", len(raw_actions))
         await self.event_bus.publish(
             Event(
                 topic="decision.actions",
@@ -181,9 +181,9 @@ class DecisionEngine:
             )
         )
 
-    async def _call_llm_api(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def _call_language_model_api(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Send the context payload to the decision LLM API and return the response.
+        Send the context payload to the decision language model API and return the response.
 
         Args:
             payload: The context payload built by ContextBuilder.

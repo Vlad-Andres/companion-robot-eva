@@ -51,7 +51,7 @@ class MemoryStore:
     Short-term memory:
         A fixed-capacity deque of recent MemoryEvents stored in RAM.
         Oldest events are automatically dropped when capacity is exceeded.
-        Used by ContextBuilder to inject recent context into the LLM.
+        Used by ContextBuilder to inject recent context into the language model.
 
     Long-term memory:
         Persistent JSON file storage for important memories.

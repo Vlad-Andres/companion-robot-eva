@@ -43,7 +43,7 @@ class EyeExpressionHandler(BaseActionHandler):
     """
     Handles "set_eye_expression" actions.
 
-    Maps expression names from the LLM response to EyeController methods.
+    Maps expression names from the language model response to EyeController methods.
 
     Expression name conventions (case-insensitive):
         "happy"       → EyeController.happy()

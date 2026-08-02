@@ -5,7 +5,7 @@ from typing import Optional
 
 from log import logger
 
-_log = logger("eva.stt")
+_log = logger("eva.speech_to_text")
 
 try:
     import numpy as _np
@@ -22,12 +22,12 @@ class AudioFormat:
     channels: int = 1
 
 
-class SttEngine:
+class SpeechToTextEngine:
     def transcribe(self, audio: bytes, audio_format: AudioFormat) -> str:
         raise NotImplementedError()
 
 
-class StubSttEngine(SttEngine):
+class StubSttEngine(SpeechToTextEngine):
     def __init__(self, text: str) -> None:
         self._text = text
 
@@ -35,7 +35,7 @@ class StubSttEngine(SttEngine):
         return self._text
 
 
-class FasterWhisperSttEngine(SttEngine):
+class FasterWhisperSttEngine(SpeechToTextEngine):
     def __init__(self, model_name: str) -> None:
         if _WhisperModel is None or _np is None:
             raise RuntimeError("faster-whisper is not available")
@@ -49,14 +49,14 @@ class FasterWhisperSttEngine(SttEngine):
         return " ".join(s.text.strip() for s in segments if s.text).strip()
 
 
-def build_default_stt_engine(*, model_name: str, stub_text: str) -> SttEngine:
+def build_speech_to_text_engine(*, model_name: str, stub_text: str) -> SpeechToTextEngine:
     if stub_text.strip():
-        _log.info("STT stub enabled")
+        _log.info("speech-to-text stub enabled")
         return StubSttEngine(stub_text.strip())
 
     if _WhisperModel is not None and _np is not None:
-        _log.info("Using faster-whisper STT")
+        _log.info("Using faster-whisper for speech-to-text")
         return FasterWhisperSttEngine(model_name)
 
-    _log.warning("No STT engine available; falling back to empty transcript")
+    _log.warning("No speech-to-text engine available; falling back to empty transcript")
     return StubSttEngine("")

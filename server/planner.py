@@ -12,7 +12,7 @@ from actions import command_from_rule_action
 class PlanResult:
     commands: List[Dict[str, Any]]
     memory_items: List[Dict[str, Any]]
-    llm_user_text: Optional[str] = None
+    language_model_input_text: Optional[str] = None
 
 
 def plan_from_transcript(text: str) -> PlanResult:
@@ -25,12 +25,12 @@ def plan_from_transcript(text: str) -> PlanResult:
         if isinstance(actions, list):
             for a in actions:
                 if isinstance(a, dict):
-                    cmd = command_from_rule_action(a)
-                    if cmd is not None:
-                        commands.append(cmd)
+                    command = command_from_rule_action(a)
+                    if command is not None:
+                        commands.append(command)
 
     if not commands:
-        return PlanResult(commands=[], memory_items=[], llm_user_text=text)
+        return PlanResult(commands=[], memory_items=[], language_model_input_text=text)
 
     memory_items.append({"type": "utterance", "text": text})
-    return PlanResult(commands=commands, memory_items=memory_items, llm_user_text=None)
+    return PlanResult(commands=commands, memory_items=memory_items, language_model_input_text=None)

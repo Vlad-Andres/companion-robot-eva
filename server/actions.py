@@ -79,9 +79,9 @@ def command_from_rule_action(action: Dict[str, Any]) -> Optional[Dict[str, Any]]
         return None
 
     if t == "move_base":
-        cmd = payload.get("command")
-        if isinstance(cmd, str) and cmd in {"stop", "forward", "backward", "turn_left", "turn_right", "come_here"}:
-            return {"name": "move_base", "group": "move", "args": {"command": cmd}}
+        command = payload.get("command")
+        if isinstance(command, str) and command in {"stop", "forward", "backward", "turn_left", "turn_right", "come_here"}:
+            return {"name": "move_base", "group": "move", "args": {"command": command}}
         return None
 
     return None

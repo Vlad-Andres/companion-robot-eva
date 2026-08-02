@@ -83,7 +83,7 @@ class APIClientTests(unittest.IsolatedAsyncioTestCase):
         ctx = ContextManager()
         cfg = DecisionAPIConfig(base_url=self.base_url, endpoint="/decide", timeout_seconds=2.0, enabled=True)
         engine = DecisionEngine(bus, ctx, cfg)
-        result = await engine._call_llm_api({"hello": "world"})
+        result = await engine._call_language_model_api({"hello": "world"})
         self.assertIn("actions", result)
         self.assertEqual(result["actions"][0]["type"], "speak")
 

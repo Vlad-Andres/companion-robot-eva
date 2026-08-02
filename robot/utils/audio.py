@@ -72,10 +72,10 @@ def play_sound(
     ext = os.path.splitext(file_path)[1].lower()
     
     if ext == ".wav":
-        cmd = ["aplay", "-D", device, file_path]
+        command = ["aplay", "-D", device, file_path]
     elif ext == ".mp3":
         # mpg123 uses -a for audio device
-        cmd = ["mpg123", "-q", "-a", device, file_path]
+        command = ["mpg123", "-q", "-a", device, file_path]
     else:
         log.warning("Unsupported audio format: %s", ext)
         return
@@ -91,7 +91,7 @@ def play_sound(
         # Run the command in the background
         log.debug("Playing sound: %s", file_path)
         subprocess.Popen(
-            cmd,
+            command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
@@ -113,7 +113,7 @@ def play_wav_bytes(
         wav_bytes = apply_wav_volume(wav_bytes, volume_percent)
 
     try:
-        with tempfile.NamedTemporaryFile(prefix="robot_tts_", suffix=".wav", delete=False) as f:
+        with tempfile.NamedTemporaryFile(prefix="robot_speech_", suffix=".wav", delete=False) as f:
             f.write(wav_bytes)
             tmp_path = f.name
     except Exception as exc:
@@ -152,7 +152,7 @@ def play_wav_bytes_blocking(
 
     tmp_path = ""
     try:
-        with tempfile.NamedTemporaryFile(prefix="robot_tts_", suffix=".wav", delete=False) as f:
+        with tempfile.NamedTemporaryFile(prefix="robot_speech_", suffix=".wav", delete=False) as f:
             f.write(wav_bytes)
             tmp_path = f.name
     except Exception as exc:

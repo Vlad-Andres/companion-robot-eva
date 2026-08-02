@@ -66,14 +66,14 @@ flowchart TD
   PROMO -->|"learned phrase"| T1
 
   ARB -->|"speak text"| TTS
-  ARB -->|"cmd envelopes"| WS
+  ARB -->|"command envelopes"| WS
   TTS -->|"audio out"| WS
 
   WS --> DISP
   DISP --> MOT
   DISP --> EYE
   DISP --> SPK
-  DISP -->|"cmd.ack"| WSC
+  DISP -->|"command.ack"| WSC
   REF --> EYE
   DEG --> REF
 ```

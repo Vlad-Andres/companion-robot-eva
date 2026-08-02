@@ -64,7 +64,7 @@ class SpeechClient(BasePerceptionClient):
     ) -> None:
         super().__init__(event_bus, context_manager)
         self.config = config
-        self._ws: Optional[websockets.WebSocketClientProtocol] = None
+        self._websocket: Optional[websockets.WebSocketClientProtocol] = None
         self._outbox: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)
         self._manager_task: Optional[asyncio.Task] = None
         self._last_listening_event_at: float = 0.0
@@ -103,16 +103,15 @@ class SpeechClient(BasePerceptionClient):
         Main lifecycle task. Handles persistent connection, 
         sending (producer), and receiving (consumer).
         """
-        ws_url = self.config.base_url.replace("http://", "ws://").replace("https://", "wss://")
-        if not ws_url.endswith("/"):
-            ws_url += "/"
+        websocket_url = self.config.base_url.replace("http://", "ws://").replace("https://", "wss://")
+        websocket_url = websocket_url.rstrip("/") + self.config.endpoint
 
         while True:
             try:
-                log.info("Connecting to STT WebSocket at %s...", ws_url)
-                async with websockets.connect(ws_url) as ws:
-                    log.info("STT WebSocket connected.")
-                    self._ws = ws
+                log.info("Connecting to speech WebSocket at %s...", websocket_url)
+                async with websockets.connect(websocket_url) as websocket:
+                    log.info("speech WebSocket connected.")
+                    self._websocket = websocket
                     
                     # Run producer (sender) and consumer (receiver) concurrently
                     # If either fails, both will be cancelled and we'll reconnect.
@@ -134,7 +133,7 @@ class SpeechClient(BasePerceptionClient):
             except (websockets.ConnectionClosed, Exception) as e:
                 log.error("WebSocket error: %s. Retrying in 5s...", e)
             
-            self._ws = None
+            self._websocket = None
             await asyncio.sleep(5)
 
     async def _producer_loop(self) -> None:
@@ -142,9 +141,9 @@ class SpeechClient(BasePerceptionClient):
         while True:
             await self._send_allowed.wait()
             chunk = await self._outbox.get()
-            if self._ws:
+            if self._websocket:
                 try:
-                    await self._ws.send(chunk)
+                    await self._websocket.send(chunk)
                     if not self._awaiting_backend:
                         self._awaiting_backend = True
                         if self._waiting_task and not self._waiting_task.done():
@@ -182,9 +181,9 @@ class SpeechClient(BasePerceptionClient):
 
     async def _consumer_loop(self) -> None:
         """Listens for transcription results from the server."""
-        if not self._ws:
+        if not self._websocket:
             return
-        async for message in self._ws:
+        async for message in self._websocket:
             try:
                 self._awaiting_backend = False
                 if self._waiting_task and not self._waiting_task.done():
@@ -201,17 +200,17 @@ class SpeechClient(BasePerceptionClient):
                     continue
 
                 if text.startswith("DO "):
-                    cmd = text[3:].strip()
-                    if cmd:
+                    command = text[3:].strip()
+                    if command:
                         await self.event_bus.publish(
-                            Event(topic="perception.backend_do", data=cmd, source=self.name)
+                            Event(topic="perception.backend_do", data=command, source=self.name)
                         )
                 else:
                     await self.event_bus.publish(
                         Event(topic="perception.backend_speech", data=text, source=self.name)
                     )
             except Exception as e:
-                log.error("Error parsing STT response: %s", e)
+                log.error("Error parsing speech-to-text response: %s", e)
 
     async def process(self, event: Event) -> None:
         """Handle a sensor.audio event by putting it in the outbox."""

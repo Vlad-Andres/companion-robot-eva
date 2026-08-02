@@ -54,16 +54,16 @@ class VisionAPIConfig:
 
 @dataclass
 class SpeechAPIConfig:
-    """Configuration for the voice-to-text API."""
+    """Configuration for the speech WebSocket session on the server."""
     base_url: str = "http://192.168.2.4:8002" # Updated to your computer's IP
-    endpoint: str = "/transcribe"
-    timeout_seconds: float = 30.0            # Increased to 30s for local STT
+    endpoint: str = "/v1/websocket/audio"     # Must match the server's WebSocket route
+    timeout_seconds: float = 30.0            # Increased to 30s for local speech-to-text
     enabled: bool = True
 
 
 @dataclass
 class DecisionAPIConfig:
-    """Configuration for the decision LLM API."""
+    """Configuration for the decision language model API."""
     base_url: str = "http://localhost:8003"
     endpoint: str = "/decide"
     timeout_seconds: float = 15.0
@@ -102,7 +102,7 @@ class AudioConfig:
 @dataclass
 class RuntimeConfig:
     """Configuration for the main agent loop."""
-    decision_loop_interval_seconds: float = 1.0   # Minimum time between LLM calls
+    decision_loop_interval_seconds: float = 1.0   # Minimum time between language model calls
     startup_animation: str = "WAKEUP"             # Eye animation on startup
     log_level: str = "INFO"
 

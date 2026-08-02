@@ -60,17 +60,19 @@ robot/                 Raspberry Pi runtime
 ├── memory/            short and long term memory
 └── tools/             manual hardware diagnostics — run these by hand
 
-server/                Mac mini brain
-├── asgi.py            ASGI entry point (uvicorn asgi:app)
-├── app.py             REST routes and WebSocket endpoint
-├── ws.py              session handling: audio in, commands out
-├── stt.py tts.py llm.py    speech recognition, synthesis, language model client
-├── planner.py         transcript → commands
-├── action_rules.py    fast-path phrase matching
-├── actions.py         action registry and argument schemas
-├── protocol.py        message envelopes
-├── voices/            Piper voice model
-└── tools/             mock server for robot-side testing
+server/                     Mac mini brain
+├── asgi.py                 ASGI entry point (uvicorn asgi:app)
+├── app.py                  REST routes and WebSocket endpoint
+├── websocket_session.py    session handling: audio in, commands out
+├── speech_to_text.py       transcription engine
+├── text_to_speech.py       speech synthesis (Piper)
+├── language_model.py       language model client (Ollama)
+├── planner.py              transcript → commands
+├── action_rules.py         fast-path phrase matching
+├── actions.py              action registry and argument schemas
+├── protocol.py             message envelopes
+├── voices/                 Piper voice model
+└── tools/                  mock server for robot-side testing
 ```
 
 ## Docs

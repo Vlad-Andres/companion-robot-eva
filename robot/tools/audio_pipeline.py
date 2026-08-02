@@ -1,5 +1,5 @@
 """
-test_audio_pipeline.py — Simplified runtime to test only the audio capture and STT API pipeline.
+audio_pipeline.py — Simplified runtime to test only the audio capture and speech-to-text API pipeline.
 
 This script:
 1. Initializes the EventBus and ContextManager.
@@ -8,7 +8,7 @@ This script:
 4. Prints the results of the transcription in real-time.
 
 Usage:
-    python test_audio_pipeline.py
+    python audio_pipeline.py
 """
 
 import asyncio
@@ -33,13 +33,13 @@ async def run_pipeline():
     # cfg.speech_api.base_url = "http://YOUR_COMPUTER_IP:8002"
     
     log.info("=" * 60)
-    log.info("Simplified Audio -> STT Pipeline Test")
+    log.info("Simplified Audio -> speech-to-text pipeline Test")
     log.info(f"Target API: {cfg.speech_api.base_url}{cfg.speech_api.endpoint}")
     log.info("=" * 60)
 
     # 2. Initialize only the necessary components
     mic = MicrophoneSensor(bus, cfg.microphone)
-    stt = SpeechClient(bus, ctx, cfg.speech_api)
+    speech_client = SpeechClient(bus, ctx, cfg.speech_api)
 
     # 3. Subscribe to the final result to print it
     async def on_speech(event: Event):
@@ -51,7 +51,7 @@ async def run_pipeline():
 
     # 4. Start services
     try:
-        await stt.start()
+        await speech_client.start()
         await mic.start()
         
         log.info("Pipeline active. Speak into the mic and watch the logs...")
@@ -67,7 +67,7 @@ async def run_pipeline():
     finally:
         log.info("Shutting down...")
         await mic.stop()
-        await stt.stop()
+        await speech_client.stop()
 
 if __name__ == "__main__":
     try:

@@ -39,14 +39,14 @@ class Settings:
     audio_idle_seconds: float
     audio_max_bytes: int
 
-    stt_model: str
-    stt_stub_text: str
+    speech_to_text_model: str
+    speech_to_text_stub_text: str
 
-    tts_enabled: bool
+    text_to_speech_enabled: bool
     piper_model_path: str
     piper_config_path: str
 
-    llm_enabled: bool
+    language_model_enabled: bool
     ollama_base_url: str
     ollama_model: str
     ollama_timeout_seconds: float
@@ -56,18 +56,18 @@ class Settings:
 
 def load_settings() -> Settings:
     return Settings(
-        host=_env_str("ROBOT_BACKEND_HOST", "0.0.0.0"),
-        port=_env_int("ROBOT_BACKEND_PORT", 8002),
-        audio_idle_seconds=_env_float("ROBOT_BACKEND_AUDIO_IDLE_SECONDS", 0.9),
-        audio_max_bytes=_env_int("ROBOT_BACKEND_AUDIO_MAX_BYTES", 2_000_000),
-        stt_model=_env_str("ROBOT_BACKEND_STT_MODEL", "small.en"),
-        stt_stub_text=_env_str("ROBOT_BACKEND_STT_STUB_TEXT", ""),
-        tts_enabled=_env_bool("ROBOT_BACKEND_TTS_ENABLED", True),
-        piper_model_path=_env_str("ROBOT_BACKEND_PIPER_MODEL_PATH", "voices/en_GB-alba-medium.onnx"),
-        piper_config_path=_env_str("ROBOT_BACKEND_PIPER_CONFIG_PATH", "voices/en_GB-alba-medium.onnx.json"),
-        llm_enabled=_env_bool("ROBOT_BACKEND_LLM_ENABLED", False),
-        ollama_base_url=_env_str("ROBOT_BACKEND_OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
-        ollama_model=_env_str("ROBOT_BACKEND_OLLAMA_MODEL", "llama3.2:3b"),
-        ollama_timeout_seconds=_env_float("ROBOT_BACKEND_OLLAMA_TIMEOUT_SECONDS", 30.0),
-        legacy_text_commands=_env_bool("ROBOT_BACKEND_LEGACY_TEXT_COMMANDS", False),
+        host=_env_str("EVA_HOST", "0.0.0.0"),
+        port=_env_int("EVA_PORT", 8002),
+        audio_idle_seconds=_env_float("EVA_AUDIO_IDLE_SECONDS", 0.9),
+        audio_max_bytes=_env_int("EVA_AUDIO_MAX_BYTES", 2_000_000),
+        speech_to_text_model=_env_str("EVA_SPEECH_TO_TEXT_MODEL", "small.en"),
+        speech_to_text_stub_text=_env_str("EVA_SPEECH_TO_TEXT_STUB_TEXT", ""),
+        text_to_speech_enabled=_env_bool("EVA_TEXT_TO_SPEECH_ENABLED", True),
+        piper_model_path=_env_str("EVA_PIPER_MODEL_PATH", "voices/en_GB-alba-medium.onnx"),
+        piper_config_path=_env_str("EVA_PIPER_CONFIG_PATH", "voices/en_GB-alba-medium.onnx.json"),
+        language_model_enabled=_env_bool("EVA_LANGUAGE_MODEL_ENABLED", False),
+        ollama_base_url=_env_str("EVA_OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+        ollama_model=_env_str("EVA_OLLAMA_MODEL", "llama3.2:3b"),
+        ollama_timeout_seconds=_env_float("EVA_OLLAMA_TIMEOUT_SECONDS", 30.0),
+        legacy_text_commands=_env_bool("EVA_LEGACY_TEXT_COMMANDS", False),
     )

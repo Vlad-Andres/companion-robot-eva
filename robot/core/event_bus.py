@@ -8,8 +8,8 @@ Well-known topics:
     sensor.vision       — raw camera frame (bytes or numpy array)
     sensor.audio        — raw audio chunk (bytes)
     perception.objects  — list of DetectedObject from vision API
-    perception.speech   — transcribed text string from STT API
-    decision.actions    — list of Action objects from decision LLM
+    perception.speech   — transcribed text string from the speech-to-text API
+    decision.actions    — list of Action objects from decision language model
     action.complete     — notification that an action finished executing
 
 Components subscribe by calling event_bus.subscribe(topic, callback).

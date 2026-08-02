@@ -3,7 +3,7 @@ actions/speak_handler.py — Handler for the "speak" action type.
 
 Receives a SpeakPayload and plays synthesized speech through the speakers.
 
-TODO: Integrate with a TTS engine (e.g. piper-tts, espeak, or a TTS API).
+TODO: Integrate with a text-to-speech engine (e.g. piper, espeak, or a speech API).
 """
 
 from __future__ import annotations
@@ -21,25 +21,25 @@ class SpeakHandler(BaseActionHandler):
 
     Responsibilities:
       - Receive SpeakPayload.text from the dispatcher.
-      - Convert text to audio using the TTS engine.
+      - Convert text to audio using the text-to-speech engine.
       - Play audio through speakers.
       - Record the spoken text in ContextManager (via callback or injected ref).
 
     Dependencies injected at construction:
       - context_manager: For recording robot speech in conversation history.
-      - tts_engine:      TTS synthesis interface (to be implemented).
+      - text_to_speech_engine:      text-to-speech synthesis interface (to be implemented).
     """
 
     action_type = ActionType.SPEAK
 
-    def __init__(self, context_manager=None, tts_engine=None) -> None:
+    def __init__(self, context_manager=None, text_to_speech_engine=None) -> None:
         """
         Args:
             context_manager: ContextManager instance for recording robot utterances.
-            tts_engine:      TTS engine stub (inject real implementation later).
+            text_to_speech_engine:      text-to-speech engine stub (inject real implementation later).
         """
         self._context = context_manager
-        self._tts = tts_engine
+        self._text_to_speech = text_to_speech_engine
 
     async def handle(self, action: Action) -> None:
         """
@@ -53,8 +53,8 @@ class SpeakHandler(BaseActionHandler):
 
         log.info("Robot speaks: %r", text)
 
-        # TODO: Call TTS engine to synthesize and play audio.
-        #       Example: await self._tts.speak(text)
+        # TODO: Call the text-to-speech engine to synthesize and play audio.
+        #       Example: await self._text_to_speech.speak(text)
 
         # Record what the robot said in conversation context.
         if self._context is not None:

@@ -6,15 +6,15 @@ from typing import Optional
 
 from log import logger
 
-_log = logger("eva.llm")
+_log = logger("eva.language_model")
 
 
-class LlmClient:
+class LanguageModelClient:
     async def chat(self, *, system_prompt: str, user_text: str) -> Optional[str]:
         raise NotImplementedError()
 
 
-class DisabledLlmClient(LlmClient):
+class DisabledLlmClient(LanguageModelClient):
     async def chat(self, *, system_prompt: str, user_text: str) -> Optional[str]:
         return None
 
@@ -26,7 +26,7 @@ class OllamaConfig:
     timeout_seconds: float
 
 
-class OllamaLlmClient(LlmClient):
+class OllamaLlmClient(LanguageModelClient):
     def __init__(self, cfg: OllamaConfig) -> None:
         self._cfg = cfg
 
@@ -58,7 +58,7 @@ class OllamaLlmClient(LlmClient):
             return None
 
 
-def build_default_llm_client(*, enabled: bool, base_url: str, model: str, timeout_seconds: float) -> LlmClient:
+def build_language_model_client(*, enabled: bool, base_url: str, model: str, timeout_seconds: float) -> LanguageModelClient:
     if not enabled:
         return DisabledLlmClient()
     return OllamaLlmClient(OllamaConfig(base_url=base_url, model=model, timeout_seconds=timeout_seconds))

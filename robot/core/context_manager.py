@@ -10,7 +10,7 @@ currently knows about:
   - recent actions taken
 
 All components read from and write to this shared context.
-The DecisionEngine reads a snapshot to build the LLM payload.
+The DecisionEngine reads a snapshot to build the language model payload.
 """
 
 from __future__ import annotations
@@ -214,7 +214,7 @@ class ContextManager:
         """
         Return an immutable-ish dict snapshot of the current context.
 
-        Used by ContextBuilder to assemble the LLM payload.
+        Used by ContextBuilder to assemble the language model payload.
 
         Returns:
             Dict with keys: objects, last_speech, history,
