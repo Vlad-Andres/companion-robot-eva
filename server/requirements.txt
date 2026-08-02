@@ -7,7 +7,7 @@ websockets             # WebSocket transport
 numpy                  # Audio buffer maths
 
 # --- Speech-to-text (optional: without it the server uses a stub transcript) ---
-faster-whisper         # STT engine used by stt.py
+faster-whisper         # engine used by speech_to_text.py
 
 # --- Tests ---
 pytest
@@ -15,6 +15,6 @@ pytest-asyncio
 httpx
 
 # --- Not installable via pip ---
-# Piper TTS is an external binary invoked by tts.py. Install separately:
+# Piper is an external binary invoked by text_to_speech.py. Install separately:
 #   brew install piper-tts     (or download a release binary)
 # The voice model itself ships in server/voices/.

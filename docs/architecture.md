@@ -8,126 +8,127 @@ The split exists because a Pi 4 running a language model manages a few tokens pe
 pegging the CPU that also has to drive motors — and it drains the battery faster than streaming
 audio over WiFi ever would. Keeping the Pi thin is what makes Eva fast.
 
-## The whole system
+This page has two halves. **[What runs today](#what-runs-today)** describes the code as it exists;
+**[Where this is going](#where-this-is-going)** describes the design being built toward. Nothing in
+the second half is implemented yet — check [roadmap.md](roadmap.md) for the order of work.
+
+---
+
+## What runs today
 
 ```mermaid
-flowchart TD
+flowchart LR
 
-  subgraph PI["Raspberry Pi 4 - robot client"]
-    MIC["Microphone<br/>16 kHz mono, 32 ms frames"]
-    VAD["VoiceGate - Silero VAD<br/>pre-roll 500ms, start 3 frames, hangover 500ms"]
-    CAP["Capability manifest<br/>built from ServiceRegistry"]
-    WSC["WebSocket client<br/>persistent, auto-reconnect"]
-    DISP["Command dispatcher<br/>grouped queues, epoch filter, stop preempts"]
-    MOT["Motors"]
+  subgraph PI["Raspberry Pi 4 — robot"]
+    MIC["MicrophoneSensor<br/>16 kHz mono PCM, 1.5 s chunks"]
+    SC["SpeechClient<br/>WebSocket, auto-reconnect<br/>RMS gate drops silence"]
+    FB["ServerFeedbackService<br/>eyes + WAV playback"]
+    DISP["ActionDispatcher → eye handlers"]
     EYE["OLED eyes"]
-    SPK["Speaker"]
-    REF["Local reflexes<br/>idle blink, intent saccade"]
-    DEG["Degraded mode<br/>if server unreachable"]
+    BLINK["IdleBlinkService"]
   end
 
-  subgraph NET["Local WiFi - mDNS discovery"]
-    WS["WebSocket session<br/>binary audio + JSON control"]
+  subgraph MAC["Mac mini — server"]
+    WS["WebSocketSession<br/>buffers audio, finalises on 0.9 s idle"]
+    STT["faster-whisper"]
+    PLAN["planner + action_rules<br/>regex over the whole utterance"]
+    LLM["Ollama<br/>plain-text reply (off by default)"]
+    TTS["Piper (or macOS say)"]
+    REC["DatasetRecorder<br/>optional labelled capture"]
   end
 
-  subgraph MAC["Mac mini - server brain"]
-    STT["Streaming STT<br/>whisper.cpp Metal"]
-    T0{"Tier 0 - safety reflex<br/>string match, ~0 ms"}
-    T1{"Tier 1 - exact + learned<br/>whole-utterance match, ~0 ms"}
-    T2["Tier 2 - small LLM 0.6B<br/>command or none, ~120 ms"]
-    T3["Tier 3 - main LLM 7B<br/>say + commands, ~600 ms"]
-    ARB["Arbiter<br/>dedupe, validate vs capabilities, stamp epoch"]
-    PROMO[("Promotion store<br/>phrase to command, promote after 3 hits")]
-    CTX[("Context<br/>perception, memory, capabilities")]
-    TTS["TTS - Piper or Kokoro<br/>sentence-split streaming"]
-  end
-
-  MIC --> VAD
-  VAD -->|"speech.started"| WSC
-  VAD -->|"audio frames, 64 ms"| WSC
-  VAD -->|"audio.end on hangover"| WSC
-  CAP -->|"announce on connect"| WSC
-  WSC --> WS
+  MIC -->|"sensor.audio"| SC
+  SC -->|"binary PCM"| WS
   WS --> STT
-
-  STT -->|"transcript + epoch"| T0
-  T0 -->|"STOP matched - preempt"| ARB
-  T0 -->|"cancel in-flight call"| T3
-  T0 -->|"no match"| T1
-  T1 -->|"utterance IS a command"| ARB
-  T1 -->|"no match - fan out"| T2
-  T1 -->|"no match - fan out"| T3
-
-  T2 -->|"confident cheap command"| ARB
-  T2 -->|"none"| T3
-  CTX --> T3
-  T3 -->|"say + commands JSON"| ARB
-  T3 -->|"command Tier 1 missed"| PROMO
-  PROMO -->|"learned phrase"| T1
-
-  ARB -->|"speak text"| TTS
-  ARB -->|"command envelopes"| WS
-  TTS -->|"audio out"| WS
-
-  WS --> DISP
-  DISP --> MOT
+  STT --> PLAN
+  STT --> REC
+  PLAN -->|"rule matched → commands"| WS
+  PLAN -->|"no match → dialogue"| LLM
+  LLM --> TTS
+  TTS -->|"WAV bytes"| WS
+  WS -->|"JSON envelopes + WAV"| SC
+  SC -->|"perception.backend_*"| FB
+  FB --> DISP
   DISP --> EYE
-  DISP --> SPK
-  DISP -->|"command.ack"| WSC
-  REF --> EYE
-  DEG --> REF
+  BLINK --> DISP
 ```
 
-## Understanding the four tiers
+**One turn, end to end.** The microphone publishes `sensor.audio` chunks on the event bus. The
+SpeechClient drops near-silence with an RMS check and streams the rest as binary frames. The server
+appends them to a buffer and finalises the utterance after 0.9 s of quiet, transcribes it, and
+tries the rule matcher. A match sends back command envelopes and ends the turn; no match hands the
+text to Ollama, whose plain-text reply is synthesised and returned as WAV. The robot plays the WAV,
+muting its own microphone while it does so, so Eva doesn't transcribe herself.
 
-An utterance escalates through tiers that get smarter and slower. Each one can end the turn, so
-common cases never pay for the expensive path.
+**What is deliberately simple right now.** There is one matching tier, not four. Endpointing is a
+server-side idle timer, not a voice gate on the Pi. The language model is prompted for plain text
+and is not constrained by the action registry. There is no arbiter, no epochs, and no capability
+handshake — the robot executes whatever command arrives.
 
-**Tier 0 — safety reflex.** Only `stop` and its synonyms, matched anywhere in the utterance.
-Fires instantly and preempts: cancels the in-flight model call and clears queued movement. This is
-the one place where loose substring matching is correct, because stopping unnecessarily costs far
-less than failing to stop.
+**What is real and worth keeping.** Components publish to topics on an async bus and never call
+each other directly, so a slow network client can't block audio capture. Services with
+`start()`/`stop()` are managed by `ServiceRegistry`: started in registration order, stopped in
+reverse, and a failure is logged without taking the robot down — a missing display degrades one
+service instead of the whole robot. Every command reaching the wire passes `validate_command()` in
+`server/actions.py`, so the registry is already the single source of truth for what Eva can do,
+even though the models don't read from it yet.
 
-**Tier 1 — exact and learned match.** Fires only when the *entire* normalised utterance is a
-command, after stripping politeness ("eva", "please", "can you"). "Turn left." dispatches with no
-model involved at all.
+### Inside the robot
 
-**Tier 2 — small model.** A 0.6B model constrained to emit *a command or nothing* — never speech.
-It catches phrasings the string tiers miss ("scoot over a bit"). It may only emit cheap, reversible
-commands; anything higher-stakes waits for Tier 3.
+`robot/runtime.py` is the composition root and nothing else: it constructs the graph, registers
+services, and handles shutdown. Behavior lives in services.
 
-**Tier 3 — main model.** Full context, constrained to a `say` + `commands` JSON schema.
+| Directory | Role |
+|---|---|
+| `core/` | Event bus, service registry, action dispatcher |
+| `sensors/` | Hardware input producers (microphone) |
+| `perception/` | `SpeechClient` — owns the WebSocket session with the server |
+| `behaviors/` | `ServerFeedbackService` (reacts to server replies), `IdleBlinkService` |
+| `actions/` | Eye expression and animation handlers |
+| `display/` | `EyeController` — OLED animation primitives |
 
-Tiers 2 and 3 run **in parallel, not in sequence**. A router placed in front of everything would
-add its latency to every dialogue turn while only helping commands — which Tier 1 already handles
-for free. Racing them means a confident Tier 2 answer lets the robot react physically in ~120 ms
-while Tier 3 is still composing the sentence, and the arbiter drops the duplicate if Tier 3 emits
-the same command.
+### Inside the server
 
-## Three ideas that hold the design together
+`app.py` exposes the REST routes and the WebSocket endpoint; `websocket_session.py` runs one
+session. `planner.py` decides commands-versus-dialogue, `action_rules.py` holds the phrase rules,
+and `actions.py` is the registry every command is validated against.
 
-**Capabilities become grammar.** The robot announces what hardware it has on connect. The server
-builds its JSON schema from that manifest, so the models *cannot* emit an action the robot doesn't
-have — no prompt engineering, no filtering after the fact. Add or remove hardware and the server
-adapts with no code change.
+---
 
-**Epochs prevent stale actions.** Every transcript and command carries an epoch. When a new
-utterance begins the epoch increments, and commands from older epochs are discarded — so a slow
-model reply from the previous sentence never gets acted on.
+## Where this is going
 
-**Reflexes stay local.** Idle blinking, intent saccades and obstacle stops live on the Pi. If the
-server is unreachable Eva degrades to a blinking, idling robot rather than a brick.
+None of this exists yet. It is recorded here because the shape of the code today — the registry,
+the event bus, the validated command envelope — is chosen to make these additions cheap.
 
-## Inside the robot runtime
+**Capabilities become grammar.** The robot announces its hardware on connect. The server builds the
+models' JSON output schema from that manifest, so a model *cannot* emit an action the robot lacks.
+The registry and `validate_command()` are the half of this that already exists; the handshake and
+the schema-constrained prompt are the missing half.
 
-The Pi runs an event-driven graph wired together in `robot/runtime.py`. Components publish to
-topics on an async bus and never call each other directly, so a slow network client can't block
-audio capture.
+**Four tiers instead of one.** An utterance would escalate through tiers that get smarter and
+slower, each able to end the turn:
 
-Most components are services with `start()`/`stop()` managed by `ServiceRegistry`: start in
-registration order, stop in reverse, and failures are logged without taking the robot down. That
-partial-failure tolerance is what makes the modular hardware story work — a missing camera
-degrades one service instead of the whole robot.
+- **Tier 0 — safety reflex.** Only `stop` and synonyms, matched anywhere in the utterance. Preempts:
+  cancels the in-flight model call and clears queued movement. Loose substring matching is correct
+  here, because stopping unnecessarily costs far less than failing to stop.
+- **Tier 1 — exact and learned match.** Fires when the *entire* normalised utterance is a command,
+  after stripping politeness. This is roughly what `action_rules.py` does today.
+- **Tier 2 — small model.** A 0.6B model constrained to emit a command or nothing, never speech.
+  Catches phrasings the string tiers miss, limited to cheap reversible commands.
+- **Tier 3 — main model.** Full context, constrained to a `say` + `commands` schema.
 
-See [protocol.md](protocol.md) for the wire contract and [roadmap.md](roadmap.md) for what is built
-versus planned.
+Tiers 2 and 3 would run **in parallel, not in sequence**. A router in front of everything would add
+its latency to every dialogue turn while only helping commands — which Tier 1 already handles for
+free. Racing them lets a confident Tier 2 answer move the robot while Tier 3 is still composing a
+sentence, with the arbiter dropping the duplicate. Worth measuring the real command-to-dialogue
+ratio before building Tier 2 at all.
+
+**Epochs prevent stale actions.** Every transcript and command carries an epoch that increments
+when a new utterance begins; commands from older epochs are discarded, so a slow reply to the
+previous sentence never gets acted on.
+
+**Reflexes stay local.** Idle blinking already is. Obstacle stops and intent saccades would join it,
+so an unreachable server degrades Eva to a blinking, idling robot rather than a brick.
+
+See [protocol.md](protocol.md) for the wire contract and [roadmap.md](roadmap.md) for the order of
+work.

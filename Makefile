@@ -6,7 +6,7 @@
 
 PY ?= python3
 
-.PHONY: help setup-server server test setup-robot robot mock clean
+.PHONY: help setup-server server test setup-robot robot mock dataset clean
 
 help:
 	@echo "Mac mini (server):"
@@ -19,7 +19,7 @@ help:
 	@echo "  make robot          run the robot runtime"
 	@echo ""
 	@echo "Development:"
-	@echo "  make mock           fake server cycling movement commands (no Mac needed)"
+	@echo "  make mock           fake eva/1 server cycling movement commands"
 	@echo "  make dataset        summarise captured training data"
 	@echo "  make clean          remove venvs and __pycache__"
 
