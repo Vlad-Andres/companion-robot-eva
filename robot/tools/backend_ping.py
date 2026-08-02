@@ -2,7 +2,7 @@ import asyncio
 import websockets
 import json
 
-async def test_stt():
+async def check_speech_connection():
     # Replace with your computer's IP address
     uri = "ws://192.168.2.4:8002"
     
@@ -23,4 +23,4 @@ async def test_stt():
         print(f"Connection failed: {e}")
 
 if __name__ == "__main__":
-    asyncio.run(test_stt())
+    asyncio.run(check_speech_connection())
