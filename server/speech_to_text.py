@@ -27,7 +27,7 @@ class SpeechToTextEngine:
         raise NotImplementedError()
 
 
-class StubSttEngine(SpeechToTextEngine):
+class StubSpeechToTextEngine(SpeechToTextEngine):
     def __init__(self, text: str) -> None:
         self._text = text
 
@@ -35,7 +35,7 @@ class StubSttEngine(SpeechToTextEngine):
         return self._text
 
 
-class FasterWhisperSttEngine(SpeechToTextEngine):
+class FasterWhisperSpeechToTextEngine(SpeechToTextEngine):
     def __init__(self, model_name: str) -> None:
         if _WhisperModel is None or _np is None:
             raise RuntimeError("faster-whisper is not available")
@@ -52,11 +52,11 @@ class FasterWhisperSttEngine(SpeechToTextEngine):
 def build_speech_to_text_engine(*, model_name: str, stub_text: str) -> SpeechToTextEngine:
     if stub_text.strip():
         _log.info("speech-to-text stub enabled")
-        return StubSttEngine(stub_text.strip())
+        return StubSpeechToTextEngine(stub_text.strip())
 
     if _WhisperModel is not None and _np is not None:
         _log.info("Using faster-whisper for speech-to-text")
-        return FasterWhisperSttEngine(model_name)
+        return FasterWhisperSpeechToTextEngine(model_name)
 
     _log.warning("No speech-to-text engine available; falling back to empty transcript")
-    return StubSttEngine("")
+    return StubSpeechToTextEngine("")

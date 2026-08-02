@@ -14,7 +14,7 @@ class LanguageModelClient:
         raise NotImplementedError()
 
 
-class DisabledLlmClient(LanguageModelClient):
+class DisabledLanguageModelClient(LanguageModelClient):
     async def chat(self, *, system_prompt: str, user_text: str) -> Optional[str]:
         return None
 
@@ -26,7 +26,7 @@ class OllamaConfig:
     timeout_seconds: float
 
 
-class OllamaLlmClient(LanguageModelClient):
+class OllamaLanguageModelClient(LanguageModelClient):
     def __init__(self, cfg: OllamaConfig) -> None:
         self._cfg = cfg
 
@@ -60,5 +60,5 @@ class OllamaLlmClient(LanguageModelClient):
 
 def build_language_model_client(*, enabled: bool, base_url: str, model: str, timeout_seconds: float) -> LanguageModelClient:
     if not enabled:
-        return DisabledLlmClient()
-    return OllamaLlmClient(OllamaConfig(base_url=base_url, model=model, timeout_seconds=timeout_seconds))
+        return DisabledLanguageModelClient()
+    return OllamaLanguageModelClient(OllamaConfig(base_url=base_url, model=model, timeout_seconds=timeout_seconds))

@@ -17,7 +17,7 @@ class TextToSpeechEngine:
         raise NotImplementedError()
 
 
-class DisabledTtsEngine(TextToSpeechEngine):
+class DisabledTextToSpeechEngine(TextToSpeechEngine):
     def synthesize_wav(self, text: str) -> Optional[bytes]:
         return None
 
@@ -28,7 +28,7 @@ class PiperConfig:
     config_path: str
 
 
-class PiperTtsEngine(TextToSpeechEngine):
+class PiperTextToSpeechEngine(TextToSpeechEngine):
     def __init__(self, cfg: PiperConfig) -> None:
         self._cfg = cfg
 
@@ -71,5 +71,5 @@ class PiperTtsEngine(TextToSpeechEngine):
 
 def build_text_to_speech_engine(*, enabled: bool, model_path: str, config_path: str) -> TextToSpeechEngine:
     if not enabled:
-        return DisabledTtsEngine()
-    return PiperTtsEngine(PiperConfig(model_path=model_path, config_path=config_path))
+        return DisabledTextToSpeechEngine()
+    return PiperTextToSpeechEngine(PiperConfig(model_path=model_path, config_path=config_path))
