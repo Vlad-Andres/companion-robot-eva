@@ -19,6 +19,12 @@ env/
 .mypy_cache/
 .ruff_cache/
 
+# Local configuration (secrets, machine-specific paths)
+.env
+
+# Captured training data — audio of whoever is near the robot
+dataset/
+
 # Robot runtime artefacts
 memory.json
 *.log

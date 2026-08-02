@@ -53,7 +53,9 @@ same registry is what constrains the language models' output.
 
 ## Configuration
 
-Server settings come from environment variables (see `server/config.py`):
+Server settings come from environment variables, optionally via a `server/.env` file
+(copy `server/.env.example`). Real environment variables override the file.
+See `server/config.py`:
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -65,6 +67,8 @@ Server settings come from environment variables (see `server/config.py`):
 | `EVA_OLLAMA_BASE_URL` | — | Ollama endpoint |
 | `EVA_OLLAMA_MODEL` | — | Model name |
 | `EVA_TEXT_TO_SPEECH_ENABLED` | `true` | Enable Piper speech synthesis |
+| `EVA_DATASET_CAPTURE_ENABLED` | `false` | Record labelled training audio |
+| `EVA_DATASET_DIR` | `dataset` | Where captured samples are written |
 
 Robot settings are dataclasses in `robot/config.py` — display, camera, microphone, server address,
 memory and audio. The server address is currently hardcoded; mDNS discovery is on the roadmap.

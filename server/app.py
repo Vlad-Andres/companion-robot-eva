@@ -7,6 +7,7 @@ from fastapi import FastAPI, WebSocket
 
 from actions import list_actions
 from config import load_settings
+from dataset_recorder import DatasetSettings, build_dataset_recorder
 from language_model import build_language_model_client
 from log import configure_logging
 from protocol import PROTOCOL_ID
@@ -29,6 +30,13 @@ def create_app() -> FastAPI:
             model=settings.ollama_model,
             timeout_seconds=settings.ollama_timeout_seconds,
         )
+        app.state.dataset_recorder = build_dataset_recorder(
+            DatasetSettings(
+                enabled=settings.dataset_capture_enabled,
+                directory=settings.dataset_directory,
+                max_bytes=settings.dataset_max_bytes,
+            )
+        )
         yield
 
     app = FastAPI(title="Robot Backend", version="0.1.0", lifespan=lifespan)
@@ -47,6 +55,13 @@ def create_app() -> FastAPI:
 
     @app.websocket("/v1/websocket/audio")
     async def websocket_audio(websocket: WebSocket) -> None:
-        await run_websocket_session(websocket, settings=app.state.settings, speech_to_text=app.state.speech_to_text, text_to_speech=app.state.text_to_speech, language_model=app.state.language_model)
+        await run_websocket_session(
+            websocket,
+            settings=app.state.settings,
+            speech_to_text=app.state.speech_to_text,
+            text_to_speech=app.state.text_to_speech,
+            language_model=app.state.language_model,
+            dataset_recorder=app.state.dataset_recorder,
+        )
 
     return app

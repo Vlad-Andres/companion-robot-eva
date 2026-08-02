@@ -7,6 +7,7 @@
 - OLED eye animations, expressions and idle blinking
 - Server: REST + WebSocket session, STT wiring, rule-based command matching, Piper speech synthesis
 - Half-duplex audio suppression so Eva doesn't hear herself
+- Optional capture of labelled training audio (see [training-data.md](training-data.md))
 
 ## Next, in order
 
@@ -27,13 +28,18 @@ boundaries, and start speaking the first sentence while the rest generates.
 commands to dialogue before adding the Tier 2 small model — if the string tiers already catch most
 commands, it earns very little.
 
-**5. Promotion store.** Log commands the language model caught that Tier 1 missed; promote a phrase
+**5. On-device intent model.** Train a closed-set intent classifier with a reject class on
+the captured dataset and run it on the Pi, wired to execute locally rather than to annotate
+messages. Keeps working when WiFi drops, and answers in tens of milliseconds instead of a
+round trip. Needs a few hundred samples per command first.
+
+**6. Promotion store.** Log commands the language model caught that Tier 1 missed; promote a phrase
 to the fast path after three consistent hits, so Eva gets faster at your personal phrasing.
 
-**6. Camera and vision.** Implement capture in `sensors/camera_sensor.py`, send frames to the
+**7. Camera and vision.** Implement capture in `sensors/camera_sensor.py`, send frames to the
 server for scene understanding with a small vision model.
 
-**7. Motors.** Add the `move` action handler and wire the base.
+**8. Motors.** Add the `move` action handler and wire the base.
 
 ## Known gaps
 

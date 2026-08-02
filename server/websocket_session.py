@@ -11,6 +11,7 @@ from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
 
 from config import Settings
+from dataset_recorder import DatasetRecorder
 from language_model import LanguageModelClient
 from log import logger
 from planner import plan_from_transcript
@@ -50,6 +51,7 @@ class WebSocketSession:
     speech_to_text: SpeechToTextEngine
     text_to_speech: TextToSpeechEngine
     language_model: LanguageModelClient
+    dataset_recorder: DatasetRecorder
     audio_format: AudioFormat
     audio_queue: asyncio.Queue[bytes | _AudioEnd]
     audio_buffer: bytearray
@@ -70,6 +72,18 @@ async def _finalize_utterance(session: WebSocketSession, websocket: WebSocket, u
     await _send_json(websocket, transcript_final_message(utterance_id=utterance_id, text=text, session_id=session.session_id))
 
     plan = plan_from_transcript(text)
+
+    session.dataset_recorder.record(
+        audio=audio,
+        transcript=text,
+        label=plan.rule_key or "none",
+        label_source="rule" if plan.rule_key else "dialogue",
+        sample_rate_hz=session.audio_format.sample_rate_hz,
+        channels=session.audio_format.channels,
+        session_id=session.session_id,
+        utterance_id=utterance_id,
+    )
+
     if plan.memory_items:
         await _send_json(websocket, memory_suggest_message(items=plan.memory_items, session_id=session.session_id))
 
@@ -131,7 +145,7 @@ async def _audio_loop(session: WebSocketSession, websocket: WebSocket) -> None:
         session.last_received_at = time.monotonic()
 
 
-async def run_websocket_session(websocket: WebSocket, *, settings: Settings, speech_to_text: SpeechToTextEngine, text_to_speech: TextToSpeechEngine, language_model: LanguageModelClient) -> None:
+async def run_websocket_session(websocket: WebSocket, *, settings: Settings, speech_to_text: SpeechToTextEngine, text_to_speech: TextToSpeechEngine, language_model: LanguageModelClient, dataset_recorder: DatasetRecorder) -> None:
     await websocket.accept()
     session = WebSocketSession(
         session_id=_new_session_id(),
@@ -139,6 +153,7 @@ async def run_websocket_session(websocket: WebSocket, *, settings: Settings, spe
         speech_to_text=speech_to_text,
         text_to_speech=text_to_speech,
         language_model=language_model,
+        dataset_recorder=dataset_recorder,
         audio_format=AudioFormat(),
         audio_queue=asyncio.Queue(maxsize=256),
         audio_buffer=bytearray(),

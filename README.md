@@ -71,6 +71,7 @@ server/                     Mac mini brain
 ├── action_rules.py         fast-path phrase matching
 ├── actions.py              action registry and argument schemas
 ├── protocol.py             message envelopes
+├── dataset_recorder.py     optional capture of labelled training audio
 ├── voices/                 Piper voice model
 └── tools/                  mock server for robot-side testing
 ```
@@ -80,6 +81,7 @@ server/                     Mac mini brain
 - [Architecture](docs/architecture.md) — the diagram, the command tiers, the design principles
 - [Protocol](docs/protocol.md) — WebSocket and REST contract, message shapes, configuration
 - [Roadmap](docs/roadmap.md) — what's built, what's next, known gaps
+- [Training data](docs/training-data.md) — capturing labelled audio for the on-device intent model
 
 ## Extending
 

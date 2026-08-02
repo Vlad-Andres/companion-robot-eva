@@ -20,6 +20,7 @@ help:
 	@echo ""
 	@echo "Development:"
 	@echo "  make mock           fake server cycling movement commands (no Mac needed)"
+	@echo "  make dataset        summarise captured training data"
 	@echo "  make clean          remove venvs and __pycache__"
 
 setup-server:
@@ -45,6 +46,9 @@ robot:
 
 mock:
 	cd server && .venv/bin/python tools/mock_command_server.py
+
+dataset:
+	cd server && .venv/bin/python tools/dataset_summary.py
 
 clean:
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +
