@@ -3,7 +3,6 @@ main.py — Robot entry point.
 
 Run with:
     python main.py
-    python main.py --config config.yaml   (once YAML loading is implemented)
 
 This file is intentionally thin. It only:
   1. Configures logging.
@@ -35,12 +34,6 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Path to a YAML configuration file. Uses defaults if omitted.",
-    )
-    parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -60,12 +53,6 @@ def load_config(args: argparse.Namespace) -> RobotConfig:
     Returns:
         A RobotConfig instance.
     """
-    if args.config:
-        # TODO: Enable once RobotConfig.from_yaml() is implemented.
-        # return RobotConfig.from_yaml(args.config)
-        print(f"WARNING: YAML config loading not yet implemented. Using defaults.")
-
-    # Override log level from CLI if provided.
     config = RobotConfig()
     config.runtime.log_level = args.log_level
     return config

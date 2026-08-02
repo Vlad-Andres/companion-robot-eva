@@ -1,189 +1,149 @@
 """
-actions/eye_expression_handler.py — Handler for eye animation actions.
+actions/eye_expression_handler.py — Handlers for eye animation actions.
 
 Handles both:
   - "set_eye_expression": sets a persistent expression (happy, sleep, etc.)
   - "play_eye_animation": plays a one-shot animation sequence (wakeup, blink, etc.)
 
-Delegates to the EyeController from display/eye_controller.py.
+Both resolve their name to an Animation member and hand it to
+EyeController.play(), which already dispatches by name.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+from typing import Optional
 
-from actions.action_types import (
-    Action,
-    ActionType,
-    PlayEyeAnimationPayload,
-    SetEyeExpressionPayload,
-)
+from actions.action_types import Action, ActionType
 from actions.base_action_handler import BaseActionHandler
 from utils.logger import get_logger
 
 log = get_logger(__name__)
 
-_EYE_ACTION_LOCK = asyncio.Lock()
-_LAST_EYE_ACTION_AT: float = 0.0
-_MIN_EYE_ACTION_INTERVAL_SECONDS = 1.0
+
+# Spoken names that don't match an Animation member one-to-one.
+_ANIMATION_ALIASES = {
+    "neutral": "RESET",
+    "default": "RESET",
+    "blink": "BLINK_SHORT",
+    "saccade": "SACCADE_RANDOM",
+}
+
+_BLINK_ANIMATIONS = frozenset({"BLINK_SHORT", "BLINK_LONG"})
 
 
-async def _reserve_eye_slot() -> bool:
-    global _LAST_EYE_ACTION_AT
-    async with _EYE_ACTION_LOCK:
-        now = time.monotonic()
-        if (now - _LAST_EYE_ACTION_AT) < _MIN_EYE_ACTION_INTERVAL_SECONDS:
-            return False
-        _LAST_EYE_ACTION_AT = now
-        return True
-
-
-class EyeExpressionHandler(BaseActionHandler):
+class DisplayRateLimit:
     """
-    Handles "set_eye_expression" actions.
+    Shared minimum interval between eye actions.
 
-    Maps expression names from the language model response to EyeController methods.
-
-    Expression name conventions (case-insensitive):
-        "happy"       → EyeController.happy()
-        "sleep"       → EyeController.sleep()
-        "neutral"     → EyeController.reset()
-        "blink"       → EyeController.blink_short()
-        ... (extend as needed)
-
-    Dependencies:
-        eye_controller: EyeController instance (from display/eye_controller.py).
+    One instance is shared by every eye handler: the limit protects the I2C
+    display itself, so expression and animation actions must draw from the
+    same budget rather than each getting their own.
     """
+
+    def __init__(self, min_interval_seconds: float = 1.0) -> None:
+        self._min_interval = min_interval_seconds
+        self._lock = asyncio.Lock()
+        self._last_action_at: float = 0.0
+
+    async def allow(self) -> bool:
+        """Claim the next slot, or return False if one was used too recently."""
+        async with self._lock:
+            now = time.monotonic()
+            if (now - self._last_action_at) < self._min_interval:
+                return False
+            self._last_action_at = now
+            return True
+
+
+def _resolve_animation(name: str):
+    """Map an expression or animation name to an Animation member, or None."""
+    from display.eye_controller import Animation
+
+    key = str(name or "").strip().lower()
+    if not key:
+        return None
+    try:
+        return Animation[_ANIMATION_ALIASES.get(key, key.upper())]
+    except KeyError:
+        return None
+
+
+class _EyeActionHandler(BaseActionHandler):
+    """
+    Shared implementation for the two eye action types.
+
+    Subclasses set action_type, the payload field to read the name from, and
+    whether an unrecognised name falls back to a neutral face or is skipped.
+    """
+
+    payload_field: str
+    unknown_name_fallback: Optional[str] = None
+
+    def __init__(
+        self,
+        eye_controller=None,
+        audio_config=None,
+        rate_limit: Optional[DisplayRateLimit] = None,
+    ) -> None:
+        """
+        Args:
+            eye_controller: EyeController instance, or None when absent.
+            audio_config:   AudioConfig for the blink sound effect.
+            rate_limit:     Shared DisplayRateLimit; one is created if omitted.
+        """
+        self._eyes = eye_controller
+        self._audio = audio_config
+        self._rate_limit = rate_limit or DisplayRateLimit()
+
+    async def handle(self, action: Action) -> None:
+        if not await self._rate_limit.allow():
+            return
+
+        name = getattr(action.payload, self.payload_field)
+        animation = _resolve_animation(name)
+
+        if animation is None:
+            if self.unknown_name_fallback is None:
+                log.warning("Unknown eye animation '%s' — skipping.", name)
+                return
+            log.warning("Unknown eye expression '%s' — falling back to neutral.", name)
+            animation = _resolve_animation(self.unknown_name_fallback)
+
+        if self._eyes is None:
+            log.warning("EyeController not available — skipping '%s'.", animation.name)
+            return
+
+        log.info("Eye action: %s", animation.name)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._eyes.play, animation)
+
+        if animation.name in _BLINK_ANIMATIONS:
+            self._play_blink_sound()
+
+    def _play_blink_sound(self) -> None:
+        if self._audio and self._audio.enabled and self._audio.blink_sound:
+            from utils.audio import play_sound
+            play_sound(
+                self._audio.blink_sound,
+                device=self._audio.device,
+                volume_percent=self._audio.volume_percent,
+                mixer_control=self._audio.mixer_control,
+                mixer_card=self._audio.mixer_card,
+            )
+
+
+class EyeExpressionHandler(_EyeActionHandler):
+    """Handles "set_eye_expression" — an unknown name resets to neutral."""
 
     action_type = ActionType.SET_EYE_EXPRESSION
-
-    def __init__(self, eye_controller=None, audio_config=None) -> None:
-        """
-        Args:
-            eye_controller: EyeController instance.
-            audio_config:   AudioConfig for sound effects.
-        """
-        self._eyes = eye_controller
-        self._audio = audio_config
-
-    async def handle(self, action: Action) -> None:
-        """
-        Execute the set_eye_expression action.
-
-        Args:
-            action: Action with payload of type SetEyeExpressionPayload.
-        """
-        if not await _reserve_eye_slot():
-            return
-
-        payload: SetEyeExpressionPayload = action.payload
-        expression = payload.expression.lower()
-
-        log.info("Setting eye expression: %s", expression)
-
-        if self._eyes is not None:
-            # TODO: Map expression strings to EyeController methods.
-            #       Add more mappings as the expression vocabulary grows.
-            expression_map = {
-                "happy": self._eyes.happy,
-                "sleep": self._eyes.sleep,
-                "neutral": self._eyes.reset,
-                "default": self._eyes.reset,
-                "blink": self._eyes.blink_short,
-                "blink_long": self._eyes.blink_long,
-                "blink_short": self._eyes.blink_short,
-                "saccade": self._eyes.saccade_random,
-                "curious": self._eyes.curious,
-                "confused": self._eyes.confused,
-                "thinking": self._eyes.thinking,
-                "impatient": self._eyes.impatient,
-            }
-
-            method = expression_map.get(expression)
-            if method is None:
-                log.warning("Unknown expression '%s' — falling back to neutral.", expression)
-                method = self._eyes.reset
-
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, method)
-
-            # Play blink sound if this was a blink expression.
-            if expression in ("blink", "blink_short", "blink_long"):
-                self._play_blink_sound()
-        else:
-            log.warning("EyeController not available — skipping display for '%s'.", expression)
+    payload_field = "expression"
+    unknown_name_fallback = "neutral"
 
 
-    def _play_blink_sound(self) -> None:
-        """Helper to play the blink sound if enabled."""
-        if self._audio and self._audio.enabled and self._audio.blink_sound:
-            from utils.audio import play_sound
-            play_sound(
-                self._audio.blink_sound,
-                device=self._audio.device,
-                volume_percent=self._audio.volume_percent,
-                mixer_control=self._audio.mixer_control,
-                mixer_card=self._audio.mixer_card,
-            )
-
-
-class EyeAnimationHandler(BaseActionHandler):
-    """
-    Handles "play_eye_animation" actions.
-
-    Plays a one-shot named animation from the Animation enum.
-
-    Dependencies:
-        eye_controller: EyeController instance.
-    """
+class EyeAnimationHandler(_EyeActionHandler):
+    """Handles "play_eye_animation" — an unknown name is skipped."""
 
     action_type = ActionType.PLAY_EYE_ANIMATION
-
-    def __init__(self, eye_controller=None, audio_config=None) -> None:
-        self._eyes = eye_controller
-        self._audio = audio_config
-
-    async def handle(self, action: Action) -> None:
-        """
-        Execute the play_eye_animation action.
-
-        Args:
-            action: Action with payload of type PlayEyeAnimationPayload.
-        """
-        if not await _reserve_eye_slot():
-            return
-
-        payload: PlayEyeAnimationPayload = action.payload
-        animation_name = payload.animation.upper()
-
-        log.info("Playing eye animation: %s", animation_name)
-
-        if self._eyes is not None:
-            from display.eye_controller import Animation
-            try:
-                anim = Animation[animation_name]
-            except KeyError:
-                log.warning("Unknown animation '%s' — skipping.", animation_name)
-                return
-
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._eyes.play, anim)
-
-            # Play blink sound if this was a blink animation.
-            if animation_name in ("BLINK_SHORT", "BLINK_LONG"):
-                self._play_blink_sound()
-        else:
-            log.warning("EyeController not available — skipping animation '%s'.", animation_name)
-
-    def _play_blink_sound(self) -> None:
-        """Helper to play the blink sound if enabled."""
-        if self._audio and self._audio.enabled and self._audio.blink_sound:
-            from utils.audio import play_sound
-            play_sound(
-                self._audio.blink_sound,
-                device=self._audio.device,
-                volume_percent=self._audio.volume_percent,
-                mixer_control=self._audio.mixer_control,
-                mixer_card=self._audio.mixer_card,
-            )
+    payload_field = "animation"

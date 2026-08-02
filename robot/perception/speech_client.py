@@ -9,7 +9,6 @@ Published events (all with source "speech_client"):
     perception.backend_command   — dict, one command envelope to execute
     perception.backend_speech    — str, reply text the server is about to speak
     perception.backend_audio     — bytes, synthesized WAV to play
-    perception.backend_do        — str, legacy plain-text command (mock server)
     perception.backend_listening — None, audio is being streamed
     perception.backend_waiting   — None, still waiting on the server
 """
@@ -200,22 +199,7 @@ class SpeechClient(BasePerceptionClient):
                 if not text:
                     continue
 
-                # Legacy plain-text protocol, still spoken by tools/mock_command_server.py.
-                if text.startswith("DO "):
-                    command = text[3:].strip()
-                    if command:
-                        await self.event_bus.publish(
-                            Event(topic="perception.backend_do", data=command, source=self.name)
-                        )
-                    continue
-
-                if text.startswith("{"):
-                    await self._handle_envelope(text)
-                    continue
-
-                await self.event_bus.publish(
-                    Event(topic="perception.backend_speech", data=text, source=self.name)
-                )
+                await self._handle_envelope(text)
             except Exception as e:
                 log.error("Error handling server message: %s", e)
 
@@ -223,9 +207,8 @@ class SpeechClient(BasePerceptionClient):
         """
         Route one JSON message from the server.
 
-        Message shapes are defined in server/protocol.py. Anything unrecognised is
-        logged rather than spoken — without this, every envelope would fall through
-        to the speech path and Eva would read raw JSON aloud.
+        Message shapes are defined in server/protocol.py. Anything unrecognised
+        is logged rather than spoken, so Eva never reads raw JSON aloud.
         """
         try:
             message = json.loads(text)

@@ -180,8 +180,6 @@ async def run_websocket_session(websocket: WebSocket, *, settings: Settings, spe
             try:
                 data = json.loads(text)
             except Exception:
-                if settings.legacy_text_commands:
-                    continue
                 await _send_json(websocket, error_message(code="bad_json", message="invalid json", session_id=session.session_id))
                 continue
 
@@ -206,8 +204,6 @@ async def run_websocket_session(websocket: WebSocket, *, settings: Settings, spe
                     ch = fmt.get("channels")
                     if isinstance(enc, str) and isinstance(sr, int) and isinstance(ch, int):
                         session.audio_format = AudioFormat(encoding=enc, sample_rate_hz=sr, channels=ch)
-                continue
-            if settings.legacy_text_commands:
                 continue
             await _send_json(websocket, error_message(code="unknown_message", message="unknown message type", session_id=session.session_id))
     except WebSocketDisconnect:

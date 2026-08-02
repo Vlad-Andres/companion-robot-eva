@@ -9,7 +9,6 @@ published by the SpeechClient:
   - backend_audio     → play the synthesized WAV through the speaker
   - backend_listening → alternating glance animation while audio streams
   - backend_waiting   → thinking/impatient loop while the server is slow
-  - backend_do        → curious eyes for legacy plain-text commands (mock)
 
 A shared wall-clock reservation (_try_reserve_feedback) keeps overlapping
 replies from fighting over the eyes and the speaker.
@@ -63,7 +62,6 @@ class ServerFeedbackService:
         self._thinking_task: Optional[asyncio.Task] = None
 
         self._subscriptions = {
-            "perception.backend_do": self._on_backend_do,
             "perception.backend_command": self._on_backend_command,
             "perception.backend_speech": self._on_backend_speech,
             "perception.backend_audio": self._on_backend_audio,
@@ -109,20 +107,6 @@ class ServerFeedbackService:
     # ------------------------------------------------------------------
     # Event handlers
     # ------------------------------------------------------------------
-
-    async def _on_backend_do(self, event: Event) -> None:
-        command = str(event.data or "").strip()
-        if not command:
-            return
-
-        if not await self._try_reserve_feedback(duration_seconds=1.6):
-            return
-
-        eyes_log.info("backend_do command=%s", command)
-        self._cancel_thinking()
-        await self.action_dispatcher.dispatch_raw(
-            [{"type": "set_eye_expression", "payload": {"expression": "curious"}}]
-        )
 
     async def _on_backend_command(self, event: Event) -> None:
         """

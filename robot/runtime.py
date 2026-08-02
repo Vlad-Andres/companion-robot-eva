@@ -118,20 +118,23 @@ class RobotRuntime:
 
     def _register_action_handlers(self) -> None:
         """Register all action handlers with the ActionDispatcher."""
-        from actions.eye_expression_handler import EyeAnimationHandler, EyeExpressionHandler
+        from actions.eye_expression_handler import (
+            DisplayRateLimit,
+            EyeAnimationHandler,
+            EyeExpressionHandler,
+        )
 
-        self.action_dispatcher.register_handler(
-            EyeExpressionHandler(
-                eye_controller=self.eye_controller,
-                audio_config=self.config.audio,
+        # Both handlers share one rate limit — it protects the display, not
+        # either action type individually.
+        display_rate_limit = DisplayRateLimit()
+        for handler_class in (EyeExpressionHandler, EyeAnimationHandler):
+            self.action_dispatcher.register_handler(
+                handler_class(
+                    eye_controller=self.eye_controller,
+                    audio_config=self.config.audio,
+                    rate_limit=display_rate_limit,
+                )
             )
-        )
-        self.action_dispatcher.register_handler(
-            EyeAnimationHandler(
-                eye_controller=self.eye_controller,
-                audio_config=self.config.audio,
-            )
-        )
         log.debug("Action handlers registered.")
 
     def _register_sensors(self) -> None:

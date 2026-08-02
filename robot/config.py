@@ -1,13 +1,12 @@
 """
 config.py — Robot configuration.
 
-All runtime parameters are collected here as dataclasses.
-Load from a YAML file via RobotConfig.from_yaml(), or use defaults.
+All runtime parameters are collected here as dataclasses. Edit the defaults
+directly; there is no config file layer yet.
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -62,7 +61,7 @@ class AudioConfig:
     mixer_control: str = "Master"
     volume_percent: int = 5
     startup_sound: str = "sounds/startup.mp3"
-    blink_sound: str = "sounds/blink.wav"
+    blink_sound: str = "sounds/blink3.wav"
 
 
 @dataclass
@@ -83,8 +82,7 @@ class RobotConfig:
     Top-level configuration object.
 
     Usage:
-        config = RobotConfig()               # all defaults
-        config = RobotConfig.from_yaml(path) # from file
+        config = RobotConfig()   # all defaults
     """
     display: DisplayConfig = field(default_factory=DisplayConfig)
     microphone: MicrophoneConfig = field(default_factory=MicrophoneConfig)
@@ -92,27 +90,3 @@ class RobotConfig:
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     idle_blink: IdleBlinkConfig = field(default_factory=IdleBlinkConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
-
-    @classmethod
-    def from_yaml(cls, path: str) -> "RobotConfig":
-        """
-        Load configuration from a YAML file.
-
-        TODO: Implement YAML parsing and map to dataclass fields.
-              Use PyYAML or similar. Merge with defaults for missing keys.
-        """
-        # TODO: implement
-        raise NotImplementedError("YAML config loading not yet implemented.")
-
-    @classmethod
-    def from_env(cls) -> "RobotConfig":
-        """
-        Load configuration overrides from environment variables.
-
-        Convention: ROBOT_<SECTION>_<KEY>=value
-        e.g. ROBOT_DISPLAY_I2C_ADDRESS=0x3C
-
-        TODO: Implement env variable parsing and override logic.
-        """
-        # TODO: implement
-        raise NotImplementedError("Env config loading not yet implemented.")

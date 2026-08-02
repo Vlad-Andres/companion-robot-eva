@@ -99,44 +99,6 @@ def play_sound(
         log.error("Failed to play sound %s: %s", file_path, exc)
 
 
-def play_wav_bytes(
-    wav_bytes: bytes,
-    device: str = "default",
-    volume_percent: int | None = None,
-    mixer_control: str = "Master",
-    mixer_card: int | None = None,
-) -> None:
-    if not wav_bytes:
-        return
-
-    if volume_percent is not None:
-        wav_bytes = apply_wav_volume(wav_bytes, volume_percent)
-
-    try:
-        with tempfile.NamedTemporaryFile(prefix="robot_speech_", suffix=".wav", delete=False) as f:
-            f.write(wav_bytes)
-            tmp_path = f.name
-    except Exception as exc:
-        log.error("Failed to write wav bytes: %s", exc)
-        return
-
-    try:
-        if volume_percent is not None:
-            set_alsa_volume(
-                volume_percent,
-                control=mixer_control,
-                mixer_card=mixer_card,
-                mixer_device=device,
-            )
-        subprocess.Popen(
-            ["aplay", "-D", device, tmp_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception as exc:
-        log.error("Failed to play wav bytes: %s", exc)
-
-
 def play_wav_bytes_blocking(
     wav_bytes: bytes,
     device: str = "default",

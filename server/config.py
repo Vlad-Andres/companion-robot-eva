@@ -77,8 +77,6 @@ class Settings:
     ollama_model: str
     ollama_timeout_seconds: float
 
-    legacy_text_commands: bool
-
     dataset_capture_enabled: bool
     dataset_directory: str
     dataset_max_bytes: int
@@ -101,7 +99,6 @@ def load_settings() -> Settings:
         ollama_base_url=_env_str("EVA_OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
         ollama_model=_env_str("EVA_OLLAMA_MODEL", "llama3.2:3b"),
         ollama_timeout_seconds=_env_float("EVA_OLLAMA_TIMEOUT_SECONDS", 30.0),
-        legacy_text_commands=_env_bool("EVA_LEGACY_TEXT_COMMANDS", False),
         dataset_capture_enabled=_env_bool("EVA_DATASET_CAPTURE_ENABLED", False),
         dataset_directory=_env_str("EVA_DATASET_DIR", "dataset"),
         dataset_max_bytes=_env_int("EVA_DATASET_MAX_BYTES", 2_000_000_000),
