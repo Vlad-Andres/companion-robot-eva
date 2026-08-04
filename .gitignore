@@ -38,3 +38,6 @@ memory.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Downloaded ONNX models — fetch with: make models
+server/models/
