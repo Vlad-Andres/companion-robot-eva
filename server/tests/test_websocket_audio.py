@@ -10,8 +10,13 @@ FRAME_BYTES = FRAME_SAMPLES * 2
 
 
 def _recv_until(websocket, predicate, max_messages: int = 30):
+    """Read text frames until `predicate` matches, stepping over audio."""
     for _ in range(max_messages):
-        message = websocket.receive_json()
+        frame = websocket.receive()
+        text = frame.get("text")
+        if text is None:
+            continue  # synthesized speech, not a control message
+        message = json.loads(text)
         if predicate(message):
             return message
     raise AssertionError("message not received")
@@ -35,8 +40,17 @@ def _handshake(websocket) -> None:
     _recv_until(websocket, lambda m: m.get("type") == "status" and m.get("state") == "ready")
 
 
-def test_audio_end_finalizes_and_emits_commands(monkeypatch, deterministic_detectors) -> None:
-    """An explicit audio.end flushes whatever has been captured."""
+def test_rule_confirmation_is_spoken_not_sent_as_a_command(
+    monkeypatch, deterministic_detectors
+) -> None:
+    """
+    "Turning left." is synthesized here, not shipped to a robot with no voice.
+
+    The rule produces a speak action and a move action. Speech is fulfilled
+    by the server, which owns the synthesiser; only the movement travels as
+    a command. Sending speak over the wire is how confirmations used to go
+    out silently.
+    """
     monkeypatch.setenv("EVA_SPEECH_TO_TEXT_STUB_TEXT", "turn left")
     app = create_app()
 
@@ -51,10 +65,13 @@ def test_audio_end_finalizes_and_emits_commands(monkeypatch, deterministic_detec
                 websocket,
                 lambda m: m.get("type") == "transcript.final" and m.get("utterance_id") == "utt_test",
             )
-            first = _recv_until(websocket, lambda m: m.get("type") == "command")
-            second = _recv_until(websocket, lambda m: m.get("type") == "command")
 
-            assert {first["command"]["name"], second["command"]["name"]} == {"speak", "move_base"}
+            speech = _recv_until(websocket, lambda m: m.get("type") == "speech.start")
+            assert speech["speech"]["text"] == "Turning left."
+
+            command = _recv_until(websocket, lambda m: m.get("type") == "command")
+            assert command["command"]["name"] == "move_base"
+            assert command["command"]["args"]["command"] == "turn_left"
 
 
 def test_endpointer_finalizes_without_audio_end(monkeypatch, deterministic_detectors) -> None:

@@ -36,6 +36,8 @@ def create_app() -> FastAPI:
             base_url=settings.ollama_base_url,
             model=settings.ollama_model,
             timeout_seconds=settings.ollama_timeout_seconds,
+            max_reply_tokens=settings.ollama_max_reply_tokens,
+            keep_alive=settings.ollama_keep_alive,
         )
         app.state.dataset_recorder = build_dataset_recorder(
             DatasetSettings(

@@ -16,6 +16,7 @@ from endpointing import Endpointer, frames_from_pcm16
 from language_model import LanguageModelClient
 from log import logger
 from planner import plan_from_transcript
+from sentences import SentenceAccumulator
 from protocol import (
     transcript_final_message,
     base_envelope,
@@ -91,25 +92,77 @@ async def _finalize_utterance(session: WebSocketSession, websocket: WebSocket, u
         await _send_json(websocket, memory_suggest_message(items=plan.memory_items, session_id=session.session_id))
 
     # Commands arrive validated by the planner against the action registry.
+    # "speak" is fulfilled here rather than sent on: the server owns the
+    # synthesiser, and the robot has no voice of its own — sending it as a
+    # command is how rule confirmations used to go out silently.
     for command in plan.commands:
+        if command["name"] == "speak":
+            await _speak(session, websocket, command["args"]["text"])
+            continue
+
         await _send_json(websocket, command_message(command_id=new_id("command"), name=command["name"], args=command["args"], session_id=session.session_id))
         session.ignore_until = max(session.ignore_until, time.monotonic() + 1.0)
 
     if plan.language_model_input_text is not None and session.settings.language_model_enabled:
-        request_id = new_id("language_model")
-        await _send_json(websocket, status_message(state="thinking", session_id=session.session_id))
-        await _send_json(websocket, language_model_requested_message(request_id=request_id, model=session.settings.ollama_model, session_id=session.session_id))
-        reply_text = await session.language_model.chat(system_prompt="Reply with plain text only.", user_text=plan.language_model_input_text)
-        await _send_json(websocket, language_model_result_message(request_id=request_id, session_id=session.session_id))
-        if reply_text and session.settings.text_to_speech_enabled:
-            speech_id = new_id("speech")
-            await _send_json(websocket, speech_start_message(speech_id=speech_id, text=reply_text, session_id=session.session_id))
-            wav = await asyncio.to_thread(session.text_to_speech.synthesize_wav, reply_text)
-            if wav:
-                await websocket.send_bytes(wav)
-            await _send_json(websocket, speech_end_message(speech_id=speech_id, session_id=session.session_id))
-            session.ignore_until = max(session.ignore_until, time.monotonic() + 1.5)
-        await _send_json(websocket, status_message(state="ready", session_id=session.session_id))
+        await _stream_reply(session, websocket, plan.language_model_input_text)
+
+
+SYSTEM_PROMPT = (
+    "You are Eva, a small companion robot. Reply in one or two short spoken "
+    "sentences. Plain text only — no markdown, no lists, no emoji."
+)
+
+
+async def _speak(session: WebSocketSession, websocket: WebSocket, text: str) -> None:
+    """Synthesize one piece of speech and send it, text first then audio."""
+    if not text or not session.settings.text_to_speech_enabled:
+        return
+
+    speech_id = new_id("speech")
+    await _send_json(websocket, speech_start_message(speech_id=speech_id, text=text, session_id=session.session_id))
+    wav = await asyncio.to_thread(session.text_to_speech.synthesize_wav, text)
+    if wav:
+        await websocket.send_bytes(wav)
+    await _send_json(websocket, speech_end_message(speech_id=speech_id, session_id=session.session_id))
+    # Stay deaf a little past the audio so Eva does not transcribe herself.
+    session.ignore_until = max(session.ignore_until, time.monotonic() + 1.5)
+
+
+async def _stream_reply(session: WebSocketSession, websocket: WebSocket, prompt: str) -> None:
+    """
+    Speak the reply sentence by sentence as the model writes it.
+
+    Waiting for the full reply and then synthesising all of it means the robot
+    is silent for the sum of both. Sending each sentence as it completes gets
+    Eva talking while the rest is still being generated.
+    """
+    request_id = new_id("language_model")
+    await _send_json(websocket, status_message(state="thinking", session_id=session.session_id))
+    await _send_json(
+        websocket,
+        language_model_requested_message(request_id=request_id, model=session.settings.ollama_model, session_id=session.session_id),
+    )
+
+    accumulator = SentenceAccumulator()
+    spoke = False
+    try:
+        async for piece in session.language_model.stream(system_prompt=SYSTEM_PROMPT, user_text=prompt):
+            for sentence in accumulator.add(piece):
+                await _speak(session, websocket, sentence)
+                spoke = True
+    except Exception as exc:
+        _log.warning("Language model stream failed: %s", exc)
+
+    remainder = accumulator.finish()
+    if remainder:
+        await _speak(session, websocket, remainder)
+        spoke = True
+
+    if not spoke:
+        _log.info("Language model produced no reply.")
+
+    await _send_json(websocket, language_model_result_message(request_id=request_id, session_id=session.session_id))
+    await _send_json(websocket, status_message(state="ready", session_id=session.session_id))
 
 
 async def _audio_loop(session: WebSocketSession, websocket: WebSocket) -> None:

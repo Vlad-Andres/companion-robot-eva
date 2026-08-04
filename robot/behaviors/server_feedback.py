@@ -160,16 +160,24 @@ class ServerFeedbackService:
         )
 
     async def _on_backend_audio(self, event: Event) -> None:
+        """
+        Play one piece of synthesized speech, in order, never dropped.
+
+        A reply arrives as several WAVs now — one per sentence, as the model
+        writes them. The busy-window used to guard this, which drops anything
+        arriving inside it, so every sentence after the first would vanish.
+        Speech queues instead; only the eye feedback is throttled.
+        """
         audio_bytes = event.data
         if not isinstance(audio_bytes, (bytes, bytearray)) or not audio_bytes:
-            return
-
-        if not await self._try_reserve_feedback(duration_seconds=2.5):
             return
 
         async with self._audio_playback_lock:
             eyes_log.info("backend_audio bytes=%d", len(audio_bytes))
             self._cancel_thinking()
+            # Hold the eye-feedback window open for as long as we are talking,
+            # so glances and blinks do not fight the speaking face.
+            await self._try_reserve_feedback(duration_seconds=2.5)
             await self.action_dispatcher.dispatch_raw(
                 [{"type": "set_eye_expression", "payload": {"expression": "happy"}}]
             )
