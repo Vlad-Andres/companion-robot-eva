@@ -14,7 +14,9 @@ pytest
 pytest-asyncio
 httpx
 
-# --- Not installable via pip ---
-# Piper is an external binary invoked by text_to_speech.py. Install separately:
-#   brew install piper-tts     (or download a release binary)
+# --- Speech synthesis ---
+# Piper is invoked as a binary by text_to_speech.py; pip puts it in .venv/bin.
+# Without it the server falls back to macOS `say`, which is a different voice.
+piper-tts              # engine used by text_to_speech.py
+
 # The voice model itself ships in server/voices/.

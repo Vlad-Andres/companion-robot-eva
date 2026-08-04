@@ -54,12 +54,15 @@ class IdleBlinkConfig:
 
 @dataclass
 class AudioConfig:
-    """Configuration for sound effects."""
+    """Configuration for all speaker output — see utils/audio.AudioOutput."""
     enabled: bool = True
     device: str = "default"                 # ALSA device name (e.g. "hw:0,0" or "plughw:0,0")
     mixer_card: int | None = None
     mixer_control: str = "Master"
-    volume_percent: int = 5
+    # Set once on the mixer at startup; playback never rescales samples, so
+    # this is the only thing that decides how loud Eva is. Turn it down if
+    # she is too loud — nothing else attenuates.
+    volume_percent: int = 70
     startup_sound: str = "sounds/startup.mp3"
     blink_sound: str = "sounds/blink3.wav"
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from typing import Optional
@@ -52,6 +53,20 @@ def _run_to_wav(args: list[str], *, stdin: Optional[bytes], label: str) -> Optio
             pass
 
 
+def _find_piper() -> Optional[str]:
+    """
+    Locate the piper binary.
+
+    `pip install piper-tts` puts it next to the running interpreter, but the
+    server starts as `.venv/bin/uvicorn` without activating the venv, so that
+    directory is not on PATH. Look beside the interpreter first, then PATH.
+    """
+    beside_interpreter = os.path.join(os.path.dirname(sys.executable), "piper")
+    if os.path.isfile(beside_interpreter) and os.access(beside_interpreter, os.X_OK):
+        return beside_interpreter
+    return shutil.which("piper")
+
+
 @dataclass(frozen=True)
 class PiperConfig:
     model_path: str
@@ -63,9 +78,9 @@ class PiperTextToSpeechEngine(TextToSpeechEngine):
         self._cfg = cfg
 
     def synthesize_wav(self, text: str) -> Optional[bytes]:
-        piper = shutil.which("piper")
+        piper = _find_piper()
         if not piper:
-            _log.warning("Piper binary not found")
+            _log.warning("Piper binary not found (pip install piper-tts)")
             return None
         if not os.path.exists(self._cfg.model_path):
             _log.warning("Piper model not found: %s", self._cfg.model_path)
