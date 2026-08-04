@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
-import struct
 import time
 from typing import Optional
 
@@ -30,24 +28,6 @@ from perception.base_perception import BasePerceptionClient
 from utils.logger import get_logger
 
 log = get_logger(__name__)
-
-
-def _pcm16le_rms(data: bytes) -> Optional[float]:
-    if not data:
-        return None
-    if len(data) < 2:
-        return None
-    if len(data) % 2 == 1:
-        data = data[:-1]
-
-    total = 0.0
-    count = 0
-    for (sample,) in struct.iter_unpack("<h", data):
-        total += float(sample * sample)
-        count += 1
-    if count == 0:
-        return None
-    return math.sqrt(total / count)
 
 
 class SpeechClient(BasePerceptionClient):
@@ -67,7 +47,6 @@ class SpeechClient(BasePerceptionClient):
         self._websocket: Optional[websockets.WebSocketClientProtocol] = None
         self._outbox: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)
         self._manager_task: Optional[asyncio.Task] = None
-        self._last_listening_event_at: float = 0.0
         self._awaiting_backend: bool = False
         self._waiting_task: Optional[asyncio.Task] = None
         self._send_allowed = asyncio.Event()
@@ -245,39 +224,52 @@ class SpeechClient(BasePerceptionClient):
                 )
             return
 
+        if message_type == "status":
+            # The server detected speech: it decides this, not the robot, so
+            # the eyes now react to actual speech rather than to loudness.
+            if message.get("state") == "listening":
+                await self.event_bus.publish(
+                    Event(topic="perception.backend_listening", data=None, source=self.name)
+                )
+            return
+
         if message_type == "error":
             log.warning("Server error: %s", message.get("error"))
             return
 
-        # hello, status, speech.end, memory.suggest, language_model.* — informational.
+        # hello, speech.end, memory.suggest, language_model.* — informational.
         log.debug("Server message: %s", message_type)
 
     async def process(self, event: Event) -> None:
-        """Handle a sensor.audio event by putting it in the outbox."""
+        """
+        Forward one microphone frame to the server.
+
+        Deliberately unconditional. There used to be an RMS gate here that
+        dropped anything below a fixed threshold, which decided what the
+        server was allowed to hear using the weakest CPU in the system and no
+        knowledge of the conversation. It also clipped word onsets, because a
+        frame is only sent *after* it crosses the threshold, and the start of
+        a word is quiet. The server holds a rolling buffer and reaches
+        backwards instead, so nothing needs discarding here.
+
+        16 kHz mono costs 32 KB/s — a rounding error on any WiFi link.
+        """
         if not self._send_allowed.is_set():
             return
 
-        audio_chunk = event.data
-        if audio_chunk is None:
+        audio_frame = event.data
+        if audio_frame is None:
             return
 
-        # Use a very sensitive RMS check to skip pure silence
-        # 150 is a good threshold for the WM8960
-        rms = _pcm16le_rms(audio_chunk)
-        if rms is not None and rms < 150:
+        # While disconnected, drop rather than accumulate: a backlog would be
+        # flushed at the server on reconnect as a burst of stale speech.
+        if self._websocket is None:
             return
-
-        now = time.monotonic()
-        if (now - self._last_listening_event_at) > 1.5:
-            self._last_listening_event_at = now
-            await self.event_bus.publish(
-                Event(topic="perception.backend_listening", data=None, source=self.name)
-            )
 
         try:
-            self._outbox.put_nowait(audio_chunk)
+            self._outbox.put_nowait(audio_frame)
         except asyncio.QueueFull:
-            # Clear if full to stay real-time
+            # Stay real-time: the newest audio matters more than the oldest.
             while not self._outbox.empty():
                 self._outbox.get_nowait()
-            self._outbox.put_nowait(audio_chunk)
+            self._outbox.put_nowait(audio_frame)

@@ -30,8 +30,11 @@ class MicrophoneConfig:
     """Configuration for audio capture."""
     device_index: Optional[int] = None
     sample_rate: int = 16000
-    chunk_duration_seconds: float = 1.5      # 1.5s is the "sweet spot" for speed vs accuracy
     channels: int = 1
+    # 512 samples = 32 ms, the frame size Silero VAD is built around. The
+    # server reassembles these, so this is a transport size and has no effect
+    # on transcription accuracy — Whisper only ever sees whole utterances.
+    frame_samples: int = 512
 
 
 @dataclass

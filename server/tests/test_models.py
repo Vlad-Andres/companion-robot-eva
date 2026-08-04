@@ -127,6 +127,55 @@ def test_smart_turn_separates_finished_from_unfinished(tmp_path) -> None:
     assert complete > incomplete
 
 
+@needs_vad
+@needs_say
+def test_real_speech_through_the_real_session(monkeypatch, tmp_path) -> None:
+    """
+    Integration: real speech, real Silero, real socket, robot-sized frames.
+
+    This asserts the pieces fit together and a turn completes on silence
+    alone, with no audio.end and no timer. That a sentence is not *split* is
+    asserted deterministically at the endpointer level in
+    test_the_sentence_that_used_to_get_cut — counting messages here would
+    race the audio task against the receive loop.
+    """
+    from fastapi.testclient import TestClient
+
+    from app import create_app
+
+    monkeypatch.setenv("EVA_SPEECH_TO_TEXT_STUB_TEXT", "what do you want to talk about")
+    monkeypatch.setenv("EVA_TURN_DETECTION_ENABLED", "false")  # silence alone: strictest case
+    monkeypatch.setenv("EVA_LANGUAGE_MODEL_ENABLED", "false")
+
+    audio = speak("What do you want to talk about", tmp_path)
+    assert len(audio) / SAMPLE_RATE > 1.5, "fixture must outlast the old 1.5s chunk period"
+    padded = np.concatenate([audio, np.zeros(SAMPLE_RATE, dtype=np.float32)])
+    pcm = (padded * 32767).astype(np.int16).tobytes()
+
+    app = create_app()
+    frame_bytes = 512 * 2
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/v1/websocket/audio") as websocket:
+            websocket.receive_json()  # hello
+            websocket.receive_json()  # status: ready
+
+            for offset in range(0, len(pcm) - frame_bytes, frame_bytes):
+                websocket.send_bytes(pcm[offset:offset + frame_bytes])
+
+            # The trailing silence must produce this on its own.
+            message = _recv_until(websocket, lambda m: m.get("type") == "transcript.final")
+            assert message["text"] == "what do you want to talk about"
+
+
+def _recv_until(websocket, predicate, max_messages: int = 40):
+    for _ in range(max_messages):
+        message = websocket.receive_json()
+        if predicate(message):
+            return message
+    raise AssertionError("expected message never arrived")
+
+
 class _AlwaysComplete:
     def is_complete(self, audio: np.ndarray) -> bool:
         return True

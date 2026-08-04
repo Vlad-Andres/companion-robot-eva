@@ -111,10 +111,9 @@ class MicrophoneSensor(BaseSensor):
         return (None, pyaudio.paContinue)
 
     def _reassembly_worker(self):
-        """Dedicated thread to process and reassemble audio chunks."""
-        frames_per_chunk = int(self.config.sample_rate * self.config.chunk_duration_seconds)
+        """Dedicated thread to cut the raw stream into fixed-size frames."""
         bytes_per_frame = 2 * self.config.channels
-        target_bytes = frames_per_chunk * bytes_per_frame
+        target_bytes = self.config.frame_samples * bytes_per_frame
         
         collected = bytearray()
         

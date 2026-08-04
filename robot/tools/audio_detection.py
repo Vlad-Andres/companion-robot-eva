@@ -21,9 +21,9 @@ def get_rms(data):
 async def monitor_audio():
     bus = EventBus()
     cfg = RobotConfig()
-    # Set shorter chunks for faster feedback during testing
-    cfg.microphone.chunk_duration_seconds = 1.0
-    
+    # Bigger frames than the runtime uses, so the printed levels are readable.
+    cfg.microphone.frame_samples = 16000
+
     mic = MicrophoneSensor(bus, cfg.microphone)
     
     print("--- Audio Detection Test ---")
