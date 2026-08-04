@@ -25,6 +25,14 @@ make setup-server && make server
 
 The server listens on `:8002`. Check it with `curl localhost:8002/health`.
 
+`make setup-server` also downloads ~10 MB of ONNX weights for voice activity and turn detection.
+Without them the server still runs, but treats every frame as speech and ends turns on silence
+alone — it says so in the log. Fetch them separately with `make models`.
+
+Speech synthesis needs Piper: `pip install piper-tts` inside `server/.venv`, or Eva falls back to
+the macOS system voice. Conversation needs [Ollama](https://ollama.com) running, plus
+`EVA_LANGUAGE_MODEL_ENABLED=true` in `server/.env`.
+
 **On the Raspberry Pi:**
 
 ```bash
@@ -69,14 +77,19 @@ server/                     Mac mini brain
 ├── speech_to_text.py       transcription engine (faster-whisper)
 ├── text_to_speech.py       speech synthesis (Piper, or macOS say)
 ├── language_model.py       language model client (Ollama)
+├── endpointing.py          where one utterance ends and the next begins
+├── voice_activity.py       Silero VAD — is this frame speech?
+├── turn_detection.py       Smart Turn — has the speaker finished?
 ├── planner.py              transcript → commands or dialogue
 ├── action_rules.py         fast-path phrase matching
 ├── actions.py              action registry, schemas and validation
+├── sentences.py            cuts the streamed reply into speakable pieces
 ├── protocol.py             message envelopes
 ├── config.py               environment-variable settings
 ├── dataset_recorder.py     optional capture of labelled training audio
 ├── log.py                  logging setup
 ├── tests/                  server test suite
+├── models/                 ONNX weights — make models (gitignored)
 ├── voices/                 Piper voice model
 └── tools/                  mock server, dataset summary
 ```
@@ -84,6 +97,7 @@ server/                     Mac mini brain
 ## Docs
 
 - [Architecture](docs/architecture.md) — how a turn flows today, and the design being built toward
+- [Flows](docs/flows.md) — sequence diagrams naming every file and function on each path
 - [Protocol](docs/protocol.md) — WebSocket and REST contract, message shapes, configuration
 - [Roadmap](docs/roadmap.md) — what's built, what's next, known gaps
 - [Training data](docs/training-data.md) — capturing labelled audio for the on-device intent model
@@ -109,5 +123,10 @@ language model's output with it is the next step — see the roadmap.
 make test
 ```
 
-Covers the server: REST routes, WebSocket audio handling and phrase matching. The scripts in
-`robot/tools/` are manual hardware checks, not automated tests — run them on the Pi by hand.
+Covers the server: REST routes, WebSocket sessions, phrase matching, sentence splitting, and
+utterance endpointing. The endpointing tests fake the detectors so they run in milliseconds and
+assert the logic; `tests/test_models.py` runs the real ONNX against synthesized speech and skips
+when the weights or macOS `say` are missing.
+
+The scripts in `robot/tools/` are manual hardware checks, not automated tests — run them on the Pi
+by hand.

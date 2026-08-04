@@ -1,145 +1,189 @@
 """
-utils/audio.py — Simple audio playback utility using aplay.
+utils/audio.py — Every sound the robot makes goes out through here.
+
+One AudioOutput instance owns the audio settings and is injected wherever
+sound is played, so the device, the volume and the on/off switch live in
+exactly one place.
+
+Two levels, and they do different jobs:
+
+  * The master volume is the mixer's, applied once by apply_volume() at
+    startup. It moves everything.
+  * A Sound's gain_percent is a trim relative to that master, so a blink can
+    sit below the voice. A trim below 100 rescales samples, which costs a
+    little quality — so speech stays at 100 by default and you turn the
+    master down instead.
+
+Applying both to the same sound is what previously left output at 0.25% of
+full scale, so the two are kept deliberately distinct: the mixer is set once
+and never per-playback.
 """
 
-import subprocess
+from __future__ import annotations
+
 import os
+import subprocess
 import tempfile
+
+from config import AudioConfig, Sound
 from utils.logger import get_logger
 from utils.wav_volume import apply_wav_volume
 
 log = get_logger(__name__)
 
+_QUIET = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
 
-def set_alsa_volume(
-    volume_percent: int,
-    control: str = "Master",
-    mixer_card: int | None = None,
-    mixer_device: str = "default",
-) -> None:
+
+def _clamp_percent(value: int) -> int:
     try:
-        vol = int(volume_percent)
-    except Exception:
-        return
-
-    vol = max(0, min(100, vol))
-    if not control:
-        return
-
-    args: list[str] = ["amixer", "-q"]
-    if mixer_card is not None:
-        args += ["-c", str(mixer_card)]
-    else:
-        args += ["-D", (mixer_device or "default")]
-
-    try:
-        subprocess.run(
-            [*args, "sset", control, f"{vol}%"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    except FileNotFoundError:
-        return
-    except Exception as exc:
-        log.debug("Failed to set ALSA volume: %s", exc)
+        return max(0, min(100, int(value)))
+    except (TypeError, ValueError):
+        return 100
 
 
-def play_sound(
-    file_path: str,
-    device: str = "default",
-    volume_percent: int | None = None,
-    mixer_control: str = "Master",
-    mixer_card: int | None = None,
-) -> None:
+class AudioOutput:
     """
-    Play a sound file (.wav or .mp3).
-    
-    Uses 'aplay' for WAV and 'mpg123' for MP3.
-    This is non-blocking (runs in the background).
-    
-    Args:
-        file_path: Path to the audio file.
-        device:    ALSA device name (default: "default").
+    Speaker output: sound effects and synthesized speech.
+
+    Usage:
+        audio = AudioOutput(config.audio)
+        audio.apply_volume()        # once, at startup
+        audio.play_startup()        # fire and forget
+        audio.play_speech(wav)      # blocks until finished
     """
-    if not file_path:
-        return
 
-    if not os.path.exists(file_path):
-        log.warning("Audio file not found: %s", file_path)
-        return
+    def __init__(self, config: AudioConfig) -> None:
+        self.config = config
+        # Trimmed copies of effect files, made once and reused: blinks fire
+        # every few seconds and rescaling the same WAV each time is waste.
+        self._trimmed: dict[tuple[str, int], str] = {}
 
-    ext = os.path.splitext(file_path)[1].lower()
-    
-    if ext == ".wav":
-        command = ["aplay", "-D", device, file_path]
-    elif ext == ".mp3":
-        # mpg123 uses -a for audio device
-        command = ["mpg123", "-q", "-a", device, file_path]
-    else:
-        log.warning("Unsupported audio format: %s", ext)
-        return
+    # ------------------------------------------------------------------
+    # Volume — the single place output level is decided
+    # ------------------------------------------------------------------
 
-    try:
-        if volume_percent is not None:
-            set_alsa_volume(
-                volume_percent,
-                control=mixer_control,
-                mixer_card=mixer_card,
-                mixer_device=device,
-            )
-        # Run the command in the background
-        log.debug("Playing sound: %s", file_path)
-        subprocess.Popen(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-    except Exception as exc:
-        log.error("Failed to play sound %s: %s", file_path, exc)
+    def apply_volume(self) -> None:
+        """
+        Set the mixer to the configured level.
 
+        Called once at startup. The mixer attenuates after the DAC, so the
+        audio keeps its full dynamic range no matter how low this is set.
+        """
+        if not self.config.enabled:
+            return
 
-def play_wav_bytes_blocking(
-    wav_bytes: bytes,
-    device: str = "default",
-    volume_percent: int | None = None,
-    mixer_control: str = "Master",
-    mixer_card: int | None = None,
-) -> None:
-    if not wav_bytes:
-        return
+        volume = _clamp_percent(self.config.volume_percent)
+        args = ["amixer", "-q"]
+        if self.config.mixer_card is not None:
+            args += ["-c", str(self.config.mixer_card)]
+        else:
+            args += ["-D", self.config.device or "default"]
 
-    if volume_percent is not None:
-        wav_bytes = apply_wav_volume(wav_bytes, volume_percent)
+        try:
+            subprocess.run([*args, "sset", self.config.mixer_control, f"{volume}%"], check=False, **_QUIET)
+            log.info("Output volume set to %d%% on '%s'.", volume, self.config.mixer_control)
+        except FileNotFoundError:
+            log.warning("amixer not found — leaving the system volume alone.")
+        except Exception as exc:
+            log.warning("Could not set output volume: %s", exc)
 
-    tmp_path = ""
-    try:
-        with tempfile.NamedTemporaryFile(prefix="robot_speech_", suffix=".wav", delete=False) as f:
-            f.write(wav_bytes)
-            tmp_path = f.name
-    except Exception as exc:
-        log.error("Failed to write wav bytes: %s", exc)
-        return
+    # ------------------------------------------------------------------
+    # Playback
+    # ------------------------------------------------------------------
 
-    try:
-        if volume_percent is not None:
-            set_alsa_volume(
-                volume_percent,
-                control=mixer_control,
-                mixer_card=mixer_card,
-                mixer_device=device,
-            )
-        subprocess.run(
-            ["aplay", "-D", device, tmp_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    except Exception as exc:
-        log.error("Failed to play wav bytes: %s", exc)
-    finally:
-        if tmp_path:
+    def play_startup(self) -> None:
+        """Play the configured startup sound."""
+        self.play_effect(self.config.startup)
+
+    def play_blink(self) -> None:
+        """Play the configured blink sound."""
+        self.play_effect(self.config.blink)
+
+    def play_effect(self, sound: Sound) -> None:
+        """Play a short sound effect in the background (.wav or .mp3)."""
+        if not self.config.enabled or not sound.path:
+            return
+
+        if not os.path.exists(sound.path):
+            log.warning("Audio file not found: %s", sound.path)
+            return
+
+        gain = _clamp_percent(sound.gain_percent)
+        extension = os.path.splitext(sound.path)[1].lower()
+
+        if extension == ".wav":
+            # aplay has no volume flag, so a trim means rescaling the samples.
+            path = sound.path if gain == 100 else self._trimmed_wav(sound.path, gain)
+            if path is None:
+                return
+            command = ["aplay", "-D", self.config.device, path]
+        elif extension == ".mp3":
+            # mpg123 scales in the decoder: 32768 is unity.
+            command = ["mpg123", "-q", "-a", self.config.device]
+            if gain != 100:
+                command += ["-f", str(int(32768 * gain / 100))]
+            command.append(sound.path)
+        else:
+            log.warning("Unsupported audio format: %s", extension)
+            return
+
+        try:
+            log.debug("Playing sound: %s at %d%% of master", sound.path, gain)
+            subprocess.Popen(command, **_QUIET)
+        except FileNotFoundError:
+            log.warning("No player installed for %s files.", extension)
+        except Exception as exc:
+            log.error("Failed to play sound %s: %s", sound.path, exc)
+
+    def _trimmed_wav(self, path: str, gain: int) -> str | None:
+        """Return a path to `path` rescaled to `gain`, building it once."""
+        key = (path, gain)
+        cached = self._trimmed.get(key)
+        if cached and os.path.exists(cached):
+            return cached
+
+        try:
+            with open(path, "rb") as handle:
+                trimmed = apply_wav_volume(handle.read(), gain)
+            with tempfile.NamedTemporaryFile(prefix="eva_effect_", suffix=".wav", delete=False) as out:
+                out.write(trimmed)
+                self._trimmed[key] = out.name
+            return out.name
+        except Exception as exc:
+            log.warning("Could not apply gain to %s: %s — playing untrimmed.", path, exc)
+            return path
+
+    def play_speech(self, wav_bytes: bytes) -> None:
+        """
+        Play synthesized speech, blocking until it finishes.
+
+        Blocking is deliberate: the caller mutes the microphone for exactly as
+        long as this takes, so Eva does not transcribe her own voice.
+        """
+        if not self.config.enabled or not wav_bytes:
+            return
+
+        gain = _clamp_percent(self.config.speech_gain_percent)
+        if gain != 100:
+            wav_bytes = apply_wav_volume(wav_bytes, gain)
+
+        temp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(prefix="eva_speech_", suffix=".wav", delete=False) as handle:
+                handle.write(wav_bytes)
+                temp_path = handle.name
+        except Exception as exc:
+            log.error("Could not write speech audio: %s", exc)
+            return
+
+        try:
+            subprocess.run(["aplay", "-D", self.config.device, temp_path], check=False, **_QUIET)
+        except FileNotFoundError:
+            log.warning("aplay not found — cannot play speech.")
+        except Exception as exc:
+            log.error("Failed to play speech: %s", exc)
+        finally:
             try:
-                os.unlink(tmp_path)
-            except Exception:
+                os.unlink(temp_path)
+            except OSError:
                 pass

@@ -12,9 +12,11 @@ from starlette.websockets import WebSocketDisconnect
 
 from config import Settings
 from dataset_recorder import DatasetRecorder
+from endpointing import Endpointer, frames_from_pcm16
 from language_model import LanguageModelClient
 from log import logger
 from planner import plan_from_transcript
+from sentences import SentenceAccumulator
 from protocol import (
     transcript_final_message,
     base_envelope,
@@ -31,6 +33,8 @@ from protocol import (
 )
 from speech_to_text import AudioFormat, SpeechToTextEngine
 from text_to_speech import TextToSpeechEngine
+from turn_detection import TurnDetector
+from voice_activity import VoiceActivityDetector
 
 _log = logger("eva.websocket_session")
 
@@ -54,7 +58,8 @@ class WebSocketSession:
     dataset_recorder: DatasetRecorder
     audio_format: AudioFormat
     audio_queue: asyncio.Queue[bytes | _AudioEnd]
-    audio_buffer: bytearray
+    endpointer: Endpointer
+    frame_carry: bytes       # partial frame left over from the last read
     ignore_until: float
     running: bool
 
@@ -87,58 +92,123 @@ async def _finalize_utterance(session: WebSocketSession, websocket: WebSocket, u
         await _send_json(websocket, memory_suggest_message(items=plan.memory_items, session_id=session.session_id))
 
     # Commands arrive validated by the planner against the action registry.
+    # "speak" is fulfilled here rather than sent on: the server owns the
+    # synthesiser, and the robot has no voice of its own — sending it as a
+    # command is how rule confirmations used to go out silently.
     for command in plan.commands:
+        if command["name"] == "speak":
+            await _speak(session, websocket, command["args"]["text"])
+            continue
+
         await _send_json(websocket, command_message(command_id=new_id("command"), name=command["name"], args=command["args"], session_id=session.session_id))
         session.ignore_until = max(session.ignore_until, time.monotonic() + 1.0)
 
     if plan.language_model_input_text is not None and session.settings.language_model_enabled:
-        request_id = new_id("language_model")
-        await _send_json(websocket, status_message(state="thinking", session_id=session.session_id))
-        await _send_json(websocket, language_model_requested_message(request_id=request_id, model=session.settings.ollama_model, session_id=session.session_id))
-        reply_text = await session.language_model.chat(system_prompt="Reply with plain text only.", user_text=plan.language_model_input_text)
-        await _send_json(websocket, language_model_result_message(request_id=request_id, session_id=session.session_id))
-        if reply_text and session.settings.text_to_speech_enabled:
-            speech_id = new_id("speech")
-            await _send_json(websocket, speech_start_message(speech_id=speech_id, text=reply_text, session_id=session.session_id))
-            wav = await asyncio.to_thread(session.text_to_speech.synthesize_wav, reply_text)
-            if wav:
-                await websocket.send_bytes(wav)
-            await _send_json(websocket, speech_end_message(speech_id=speech_id, session_id=session.session_id))
-            session.ignore_until = max(session.ignore_until, time.monotonic() + 1.5)
-        await _send_json(websocket, status_message(state="ready", session_id=session.session_id))
+        await _stream_reply(session, websocket, plan.language_model_input_text)
+
+
+SYSTEM_PROMPT = (
+    "You are Eva, a small companion robot. Reply in one or two short spoken "
+    "sentences. Plain text only — no markdown, no lists, no emoji."
+)
+
+
+async def _speak(session: WebSocketSession, websocket: WebSocket, text: str) -> None:
+    """Synthesize one piece of speech and send it, text first then audio."""
+    if not text or not session.settings.text_to_speech_enabled:
+        return
+
+    speech_id = new_id("speech")
+    await _send_json(websocket, speech_start_message(speech_id=speech_id, text=text, session_id=session.session_id))
+    wav = await asyncio.to_thread(session.text_to_speech.synthesize_wav, text)
+    if wav:
+        await websocket.send_bytes(wav)
+    await _send_json(websocket, speech_end_message(speech_id=speech_id, session_id=session.session_id))
+    # Stay deaf a little past the audio so Eva does not transcribe herself.
+    session.ignore_until = max(session.ignore_until, time.monotonic() + 1.5)
+
+
+async def _stream_reply(session: WebSocketSession, websocket: WebSocket, prompt: str) -> None:
+    """
+    Speak the reply sentence by sentence as the model writes it.
+
+    Waiting for the full reply and then synthesising all of it means the robot
+    is silent for the sum of both. Sending each sentence as it completes gets
+    Eva talking while the rest is still being generated.
+    """
+    request_id = new_id("language_model")
+    await _send_json(websocket, status_message(state="thinking", session_id=session.session_id))
+    await _send_json(
+        websocket,
+        language_model_requested_message(request_id=request_id, model=session.settings.ollama_model, session_id=session.session_id),
+    )
+
+    accumulator = SentenceAccumulator()
+    spoke = False
+    try:
+        async for piece in session.language_model.stream(system_prompt=SYSTEM_PROMPT, user_text=prompt):
+            for sentence in accumulator.add(piece):
+                await _speak(session, websocket, sentence)
+                spoke = True
+    except Exception as exc:
+        _log.warning("Language model stream failed: %s", exc)
+
+    remainder = accumulator.finish()
+    if remainder:
+        await _speak(session, websocket, remainder)
+        spoke = True
+
+    if not spoke:
+        _log.info("Language model produced no reply.")
+
+    await _send_json(websocket, language_model_result_message(request_id=request_id, session_id=session.session_id))
+    await _send_json(websocket, status_message(state="ready", session_id=session.session_id))
 
 
 async def _audio_loop(session: WebSocketSession, websocket: WebSocket) -> None:
+    """
+    Feed every arriving frame to the endpointer and act on completed turns.
+
+    There is no idle timer here any more. The endpointer decides where an
+    utterance ends from the audio itself, so nothing depends on frames
+    arriving faster than some timeout — which is what used to cut sentences
+    in half whenever the chunk period outran it.
+    """
     while session.running:
-        try:
-            item = await asyncio.wait_for(session.audio_queue.get(), timeout=session.settings.audio_idle_seconds)
-        except asyncio.TimeoutError:
-            if session.audio_buffer and time.monotonic() >= session.ignore_until:
-                audio = bytes(session.audio_buffer)
-                session.audio_buffer.clear()
-                await _finalize_utterance(session, websocket, new_id("utterance"), audio)
-            continue
+        item = await session.audio_queue.get()
 
         if isinstance(item, _AudioEnd):
-            if session.audio_buffer and time.monotonic() >= session.ignore_until:
-                audio = bytes(session.audio_buffer)
-                session.audio_buffer.clear()
-                await _finalize_utterance(session, websocket, item.utterance_id, audio)
+            # The robot can still force an endpoint, but nothing requires it to.
+            utterance = session.endpointer.flush()
+            if utterance and time.monotonic() >= session.ignore_until:
+                await _finalize_utterance(session, websocket, item.utterance_id, utterance)
             continue
 
         if time.monotonic() < session.ignore_until:
-            session.audio_buffer.clear()
+            # Eva is talking. Drop her own voice and forget the partial turn.
+            session.frame_carry = b""
+            session.endpointer.reset()
             continue
 
-        if len(session.audio_buffer) + len(item) > session.settings.audio_max_bytes:
-            session.audio_buffer.clear()
-            await _send_json(websocket, error_message(code="audio_buffer_overflow", message="audio buffer overflow", session_id=session.session_id))
-            continue
+        frames, session.frame_carry = frames_from_pcm16(item, session.frame_carry)
 
-        session.audio_buffer.extend(item)
+        for frame in frames:
+            was_speaking = session.endpointer.in_speech
+            utterance = session.endpointer.push(frame)
+
+            if session.endpointer.in_speech and not was_speaking:
+                await _send_json(websocket, status_message(state="listening", session_id=session.session_id))
+
+            if utterance is not None:
+                await _finalize_utterance(session, websocket, new_id("utterance"), utterance)
+                if time.monotonic() < session.ignore_until:
+                    # Replying invalidates anything captured while we spoke.
+                    session.frame_carry = b""
+                    session.endpointer.reset()
+                    break
 
 
-async def run_websocket_session(websocket: WebSocket, *, settings: Settings, speech_to_text: SpeechToTextEngine, text_to_speech: TextToSpeechEngine, language_model: LanguageModelClient, dataset_recorder: DatasetRecorder) -> None:
+async def run_websocket_session(websocket: WebSocket, *, settings: Settings, speech_to_text: SpeechToTextEngine, text_to_speech: TextToSpeechEngine, language_model: LanguageModelClient, dataset_recorder: DatasetRecorder, voice_activity: VoiceActivityDetector, turn_detector: TurnDetector) -> None:
     await websocket.accept()
     session = WebSocketSession(
         session_id=_new_session_id(),
@@ -149,7 +219,10 @@ async def run_websocket_session(websocket: WebSocket, *, settings: Settings, spe
         dataset_recorder=dataset_recorder,
         audio_format=AudioFormat(),
         audio_queue=asyncio.Queue(maxsize=256),
-        audio_buffer=bytearray(),
+        # Each connection gets its own endpointer: the detectors carry state
+        # between frames and must not be shared across sessions.
+        endpointer=Endpointer(voice_activity, turn_detector, settings.endpointer),
+        frame_carry=b"",
         ignore_until=0.0,
         running=True,
     )

@@ -84,17 +84,17 @@ class _EyeActionHandler(BaseActionHandler):
     def __init__(
         self,
         eye_controller=None,
-        audio_config=None,
+        audio_output=None,
         rate_limit: Optional[DisplayRateLimit] = None,
     ) -> None:
         """
         Args:
             eye_controller: EyeController instance, or None when absent.
-            audio_config:   AudioConfig for the blink sound effect.
+            audio_output:   AudioOutput for the blink sound effect.
             rate_limit:     Shared DisplayRateLimit; one is created if omitted.
         """
         self._eyes = eye_controller
-        self._audio = audio_config
+        self._audio = audio_output
         self._rate_limit = rate_limit or DisplayRateLimit()
 
     async def handle(self, action: Action) -> None:
@@ -119,19 +119,8 @@ class _EyeActionHandler(BaseActionHandler):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._eyes.play, animation)
 
-        if animation.name in _BLINK_ANIMATIONS:
-            self._play_blink_sound()
-
-    def _play_blink_sound(self) -> None:
-        if self._audio and self._audio.enabled and self._audio.blink_sound:
-            from utils.audio import play_sound
-            play_sound(
-                self._audio.blink_sound,
-                device=self._audio.device,
-                volume_percent=self._audio.volume_percent,
-                mixer_control=self._audio.mixer_control,
-                mixer_card=self._audio.mixer_card,
-            )
+        if animation.name in _BLINK_ANIMATIONS and self._audio is not None:
+            self._audio.play_blink()
 
 
 class EyeExpressionHandler(_EyeActionHandler):

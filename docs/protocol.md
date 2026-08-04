@@ -18,21 +18,27 @@ The server listens on port **8002**.
 
 1. Robot connects to `ws://<server>:8002/v1/websocket/audio`.
 2. Server sends `hello`, then `status` with state `ready`.
-3. Robot streams microphone audio as **binary frames** — PCM S16LE, mono, 16 kHz.
-4. Server finalises the utterance after `EVA_AUDIO_IDLE_SECONDS` of quiet (default 0.9 s) and
-   transcribes it. A robot-sent `audio.end` would finalise immediately, but the robot does not send
-   one yet, so the idle timer is currently the only endpoint.
-5. Server replies with the messages below. Binary frames carry synthesised speech as WAV.
+3. Robot streams **every** microphone frame as binary — PCM S16LE, mono, 16 kHz, 512 samples
+   (32 ms) per frame. It applies no gate and makes no decisions; 32 KB/s is cheap and discarding
+   audio early is what used to clip word onsets.
+4. The server decides where the utterance ends, from the audio: Silero VAD per frame, 300 ms of
+   pre-roll kept from before speech was detected, and Smart Turn to check the sentence actually
+   sounds finished before committing. `audio.end` still forces an endpoint but nothing requires the
+   robot to send it.
+5. Server replies with the messages below. Binary frames carry synthesised speech as WAV — **one
+   per sentence**, streamed as the reply is written, so expect several per turn.
 
-After sending commands or speech the server ignores inbound audio briefly, so Eva does not
-transcribe her own voice.
+While Eva is speaking the server ignores inbound audio, so she does not transcribe her own voice.
+
+Frame size is a transport detail. The server reassembles frames across reads, and Whisper only ever
+sees whole utterances, so it has no effect on transcription accuracy.
 
 ## Messages the server sends
 
 | Type | Payload | Robot behaviour |
 |---|---|---|
 | `hello` | — | Logged |
-| `status` | `state`: `ready` \| `thinking` | Logged |
+| `status` | `state`: `ready` \| `listening` \| `thinking` | `listening` drives the glance animation |
 | `transcript.final` | `utterance_id`, `text` | Published as `perception.transcript` |
 | `command` | `command`: `{id, name, args}` | Executed — see below |
 | `speech.start` | `speech`: `{id, text, audio_format}` | Happy eyes; the WAV follows |
@@ -48,9 +54,9 @@ Anything unrecognised is logged rather than spoken, so Eva never reads raw JSON 
 
 | Type | Purpose |
 |---|---|
-| binary frames | PCM S16LE mono 16 kHz microphone audio |
+| binary frames | PCM S16LE mono 16 kHz, 512 samples per frame, sent continuously |
 | `ping` | Keepalive; server replies `pong` |
-| `audio.end` | Finalise the current utterance *(defined, not yet sent by the robot)* |
+| `audio.end` | Force an endpoint now *(supported; the robot does not need to send it)* |
 | `audio.format` | Override the assumed audio format *(defined, not yet sent)* |
 
 ## Command envelope
@@ -77,8 +83,10 @@ roadmap; today the envelope carries neither.
 
 Currently defined: `speak` (`text`) and `move_base` (`command`, one of `stop`, `forward`,
 `backward`, `turn_left`, `turn_right`, `come_here`). The robot has no motor handler yet, so
-`move_base` is logged and shown on the eyes; `speak` is logged, because audible replies arrive as
-server-synthesised WAV rather than being spoken locally.
+`move_base` is logged and shown on the eyes.
+
+`speak` never travels over the wire: the server owns the synthesiser, so it fulfils speak actions
+itself as `speech.start` plus a WAV. Only commands the robot can actually execute are sent.
 
 ## Configuration
 
@@ -90,8 +98,16 @@ See `server/config.py`:
 |---|---|---|
 | `EVA_HOST` | `0.0.0.0` | Listen address |
 | `EVA_PORT` | `8002` | Listen port |
-| `EVA_AUDIO_IDLE_SECONDS` | `0.9` | Silence that ends an utterance |
 | `EVA_AUDIO_MAX_BYTES` | `2000000` | Hard cap per utterance |
+| `EVA_VAD_THRESHOLD` | `0.5` | Speech probability above which a frame counts |
+| `EVA_PREROLL_SECONDS` | `0.3` | Audio kept from before speech was detected |
+| `EVA_HANGOVER_SECONDS` | `0.6` | Silence that provisionally ends a turn |
+| `EVA_MAX_EXTENSION_SECONDS` | `4.0` | How long an unfinished turn may run on |
+| `EVA_MAX_UTTERANCE_SECONDS` | `30.0` | Hard cap on one utterance |
+| `EVA_VAD_MODEL_PATH` | `models/silero_vad.onnx` | Silero weights |
+| `EVA_TURN_DETECTION_ENABLED` | `true` | Semantic turn detection on/off |
+| `EVA_TURN_MODEL_PATH` | `models/smart_turn.onnx` | Smart Turn weights |
+| `EVA_TURN_THRESHOLD` | `0.5` | P(complete) above which a turn ends |
 | `EVA_SPEECH_TO_TEXT_MODEL` | `small.en` | faster-whisper model |
 | `EVA_SPEECH_TO_TEXT_STUB_TEXT` | — | Force a fixed transcript, for testing |
 | `EVA_TEXT_TO_SPEECH_ENABLED` | `true` | Enable speech synthesis |
@@ -102,6 +118,8 @@ See `server/config.py`:
 | `EVA_OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama endpoint |
 | `EVA_OLLAMA_MODEL` | `llama3.2:3b` | Model name |
 | `EVA_OLLAMA_TIMEOUT_SECONDS` | `30` | Request timeout |
+| `EVA_OLLAMA_MAX_REPLY_TOKENS` | `80` | Reply length cap |
+| `EVA_OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model resident |
 | `EVA_DATASET_CAPTURE_ENABLED` | `false` | Record labelled training audio |
 | `EVA_DATASET_DIR` | `dataset` | Where captured samples are written |
 | `EVA_DATASET_MAX_BYTES` | `2000000000` | Capture pauses at this size |

@@ -24,6 +24,7 @@ from config import RobotConfig
 from core.action_dispatcher import ActionDispatcher
 from core.event_bus import Event, EventBus
 from core.service_registry import ServiceRegistry
+from utils.audio import AudioOutput
 from utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -61,6 +62,9 @@ class RobotRuntime:
         self.event_bus = EventBus()
         self.service_registry = ServiceRegistry()
         self.action_dispatcher = ActionDispatcher()
+
+        # Every sound the robot makes goes through this one object.
+        self.audio_output = AudioOutput(config.audio)
 
         # ------------------------------------------------------------------
         # Display (eye controller)
@@ -131,7 +135,7 @@ class RobotRuntime:
             self.action_dispatcher.register_handler(
                 handler_class(
                     eye_controller=self.eye_controller,
-                    audio_config=self.config.audio,
+                    audio_output=self.audio_output,
                     rate_limit=display_rate_limit,
                 )
             )
@@ -164,7 +168,7 @@ class RobotRuntime:
             ServerFeedbackService(
                 event_bus=self.event_bus,
                 action_dispatcher=self.action_dispatcher,
-                audio_config=self.config.audio,
+                audio_output=self.audio_output,
             )
         )
 
@@ -208,6 +212,9 @@ class RobotRuntime:
         """
         log.info("Robot runtime starting up.")
 
+        # Set the output level once; nothing else touches volume after this.
+        self.audio_output.apply_volume()
+
         # Install signal handlers for graceful shutdown.
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -250,16 +257,7 @@ class RobotRuntime:
         await loop.run_in_executor(None, self.eye_controller.play, anim)
         log.info("Startup animation '%s' played.", animation_name)
 
-        # Play startup sound if enabled.
-        if self.config.audio.enabled and self.config.audio.startup_sound:
-            from utils.audio import play_sound
-            play_sound(
-                self.config.audio.startup_sound,
-                device=self.config.audio.device,
-                volume_percent=self.config.audio.volume_percent,
-                mixer_control=self.config.audio.mixer_control,
-                mixer_card=self.config.audio.mixer_card,
-            )
+        self.audio_output.play_startup()
 
     def _handle_shutdown_signal(self) -> None:
         """Signal handler: request graceful shutdown."""
