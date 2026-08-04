@@ -16,7 +16,7 @@ help:
 	@echo "  make setup-server   create server/.venv and install dependencies"
 	@echo "  make models         download the voice activity and turn detection models"
 	@echo "  make server         run the server on :8002 with autoreload"
-	@echo "  make test           run the server test suite"
+	@echo "  make test           run the server and robot test suites"
 	@echo ""
 	@echo "Raspberry Pi (robot):"
 	@echo "  make setup-robot    create robot/.venv and install dependencies"
@@ -50,8 +50,11 @@ server/models/smart_turn.onnx:
 server:
 	cd server && .venv/bin/uvicorn asgi:app --host 0.0.0.0 --port 8002 --reload
 
+# Both halves. The robot tests stub the hardware drivers, so they run on a
+# development machine and use the server venv rather than needing the Pi.
 test:
 	cd server && .venv/bin/python -m pytest -q
+	cd robot && ../server/.venv/bin/python -m pytest tests -q -p no:cacheprovider
 
 setup-robot:
 	$(PY) -m venv robot/.venv

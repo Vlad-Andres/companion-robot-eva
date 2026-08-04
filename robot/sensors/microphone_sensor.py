@@ -111,25 +111,33 @@ class MicrophoneSensor(BaseSensor):
         return (None, pyaudio.paContinue)
 
     def _reassembly_worker(self):
-        """Dedicated thread to cut the raw stream into fixed-size frames."""
+        """
+        Dedicated thread to cut the raw stream into fixed-size frames.
+
+        Every whole frame in the buffer must be emitted per read, not one.
+        pyaudio hands over frames_per_buffer samples at a time, which is
+        several frames' worth; emitting a single one per callback throttles
+        capture to a fraction of real time and the rest piles up in
+        `collected`, so the robot falls further behind the longer you talk.
+        """
         bytes_per_frame = 2 * self.config.channels
         target_bytes = self.config.frame_samples * bytes_per_frame
-        
+
         collected = bytearray()
-        
+
         while self._running:
             try:
                 # Block for 100ms waiting for data
                 data = self._raw_queue.get(timeout=0.1)
                 collected.extend(data)
-                
-                if len(collected) >= target_bytes:
+
+                while len(collected) >= target_bytes:
                     chunk_raw = bytes(collected[:target_bytes])
                     del collected[:target_bytes]
-                    
+
                     # Process (Mono conversion)
                     processed = self._process_raw_data(chunk_raw)
-                    
+
                     # Send back to asyncio loop
                     if processed and self._loop:
                         asyncio.run_coroutine_threadsafe(

@@ -60,4 +60,5 @@ and is logged.
 - The microphone is always streaming, so everything in the room reaches the Mac. The old RMS gate
   was an accidental privacy filter; if that matters, the honest replacement is a wake word or
   push-to-talk, not an energy threshold that does both jobs badly.
-- No automated tests cover the robot half; `robot/tools/` are manual hardware checks.
+- Robot-side test coverage is thin: `robot/tests/` pins microphone capture rate with the
+  hardware drivers stubbed, but nothing else. `robot/tools/` are manual hardware checks.
