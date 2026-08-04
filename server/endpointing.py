@@ -73,6 +73,17 @@ class Endpointer:
     def in_speech(self) -> bool:
         return self._in_speech
 
+    def flush(self) -> Optional[bytes]:
+        """
+        End the current utterance now, whatever the detectors think.
+
+        For an explicit `audio.end` from the robot, which outranks any
+        judgement made here. Returns None if nothing is in progress.
+        """
+        if not self._in_speech or not self._speech:
+            return None
+        return self._finish()
+
     def reset(self) -> None:
         """Abandon any utterance in progress — used when the robot is muted."""
         self._speech.clear()

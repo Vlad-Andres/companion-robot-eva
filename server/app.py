@@ -13,6 +13,8 @@ from log import configure_logging
 from protocol import PROTOCOL_ID
 from speech_to_text import build_speech_to_text_engine
 from text_to_speech import build_text_to_speech_engine
+from turn_detection import build_turn_detector
+from voice_activity import build_voice_activity_detector
 from websocket_session import run_websocket_session
 
 
@@ -42,6 +44,14 @@ def create_app() -> FastAPI:
                 max_bytes=settings.dataset_max_bytes,
             )
         )
+        # Loaded once and shared; each session gets its own Endpointer around
+        # them, since only the endpointer keeps per-connection state.
+        app.state.voice_activity = build_voice_activity_detector(settings.voice_activity_model_path)
+        app.state.turn_detector = build_turn_detector(
+            enabled=settings.turn_detection_enabled,
+            model_path=settings.turn_detection_model_path,
+            threshold=settings.turn_detection_threshold,
+        )
         yield
 
     app = FastAPI(title="Robot Backend", version="0.1.0", lifespan=lifespan)
@@ -67,6 +77,8 @@ def create_app() -> FastAPI:
             text_to_speech=app.state.text_to_speech,
             language_model=app.state.language_model,
             dataset_recorder=app.state.dataset_recorder,
+            voice_activity=app.state.voice_activity,
+            turn_detector=app.state.turn_detector,
         )
 
     return app
