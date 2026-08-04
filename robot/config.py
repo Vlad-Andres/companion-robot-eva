@@ -52,6 +52,20 @@ class IdleBlinkConfig:
     long_blink_chance: float = 0.2      # Probability of a slow blink (vs quick)
 
 
+@dataclass(frozen=True)
+class Sound:
+    """
+    A sound effect, and how loud it is relative to the master volume.
+
+    gain_percent is a trim, not an absolute level: 100 plays at the master
+    volume untouched, 30 plays noticeably quieter than everything else.
+    Anything below 100 rescales the samples, which costs a little quality —
+    fine for short effects, which is why speech defaults to 100.
+    """
+    path: str
+    gain_percent: int = 100
+
+
 @dataclass
 class AudioConfig:
     """Configuration for all speaker output — see utils/audio.AudioOutput."""
@@ -59,12 +73,18 @@ class AudioConfig:
     device: str = "default"                 # ALSA device name (e.g. "hw:0,0" or "plughw:0,0")
     mixer_card: int | None = None
     mixer_control: str = "Master"
-    # Set once on the mixer at startup; playback never rescales samples, so
-    # this is the only thing that decides how loud Eva is. Turn it down if
-    # she is too loud — nothing else attenuates.
+
+    # Master level, set once on the mixer at startup. This is the one knob
+    # that moves everything; the per-sound gains below are relative to it.
     volume_percent: int = 70
-    startup_sound: str = "sounds/startup.mp3"
-    blink_sound: str = "sounds/blink3.wav"
+
+    # Eva's voice. Leave at 100 so synthesized speech keeps its full dynamic
+    # range; lower the master volume instead if she is too loud overall.
+    speech_gain_percent: int = 100
+
+    startup: Sound = field(default_factory=lambda: Sound("sounds/startup.mp3"))
+    # Blinks fire every few seconds, so they sit well below the voice.
+    blink: Sound = field(default_factory=lambda: Sound("sounds/blink3.wav", gain_percent=30))
 
 
 @dataclass
