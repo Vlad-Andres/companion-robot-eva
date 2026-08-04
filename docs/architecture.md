@@ -121,6 +121,50 @@ the endpointing logic be tested with fakes in milliseconds and no model files. `
 fetches the ~10 MB of ONNX weights; without them the server still runs, treating every frame as
 speech and ending turns on silence alone, and says so in the log.
 
+### Who decides what
+
+Exactly **two** of the server's seventeen modules know a network exists:
+
+```
+$ grep -ln "WebSocket\|send_bytes\|send_text" server/*.py
+app.py
+websocket_session.py
+```
+
+`app.py` declares the route. `websocket_session.py` runs the session and owns three things, and
+only these three:
+
+1. **Transport** — the only place `receive()`, `send_text()` and `send_bytes()` appear.
+2. **Per-connection state** — the endpointer, `frame_carry`, `ignore_until`.
+3. **Orchestration** — the order the stages run in.
+
+That third one is worth stating precisely, because it is easy to assume the session decides more
+than it does. It sequences the work; it makes none of the judgements.
+
+| Decision | Made in |
+|---|---|
+| Is this frame speech? | `voice_activity.py` |
+| Has the speaker finished? | `turn_detection.py` |
+| Where does the utterance start and end? | `endpointing.py` |
+| What were the words? | `speech_to_text.py` |
+| Command or conversation? | `planner.py`, `action_rules.py` |
+| Is this command legal? | `actions.py` — `validate_command()` |
+| Where does a spoken sentence end? | `sentences.py` |
+| *In what order all of the above happens* | `websocket_session.py` |
+
+Everything below the session is a plain function of its input: give it audio, get text; give it
+text, get a plan. None of them can reach the socket, so none of them can be tested only through
+one. That is why `test_endpointing.py` runs the real endpointing logic against fake detectors in
+40 ms without opening a connection, and why swapping Piper for `say`, or Silero for the always-on
+fallback, changes no calling code.
+
+**The seam that moves next.** Orchestration is the responsibility that will strain first.
+`_finalize_utterance()` is around thirty-five lines today and reads top to bottom. The tier design
+below routes tier-0 preemption, a parallel tier-2/3 race and an arbiter through that same
+function, and it will not survive that. At which point orchestration earns its own object — a
+`Turn` owning one utterance's journey — leaving `websocket_session.py` with transport and session
+state alone. Worth doing when tiers arrive, not before.
+
 ---
 
 ## Where this is going

@@ -4,7 +4,10 @@ Every diagram here names real files and real functions. If a box says
 `endpointing.py · push()`, that function exists and is on the path.
 
 For the shape of the system and the reasoning behind it, read
-[architecture.md](architecture.md). This page is the wiring.
+[architecture.md](architecture.md) — in particular
+[Who decides what](architecture.md#who-decides-what), which sets out why
+`websocket_session.py` sequences all of this without making any of the decisions. This page is
+the wiring.
 
 - [The components](#the-components)
 - [Startup — the server](#startup--the-server)
