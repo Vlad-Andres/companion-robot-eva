@@ -20,58 +20,74 @@ the second half is implemented yet — check [roadmap.md](roadmap.md) for the or
 flowchart LR
 
   subgraph PI["Raspberry Pi 4 — robot"]
-    MIC["MicrophoneSensor<br/>16 kHz mono PCM, 1.5 s chunks"]
-    SC["SpeechClient<br/>WebSocket, auto-reconnect<br/>RMS gate drops silence"]
-    FB["ServerFeedbackService<br/>eyes + WAV playback"]
-    DISP["ActionDispatcher → eye handlers"]
+    MIC["MicrophoneSensor<br/>16 kHz mono, 512-sample frames"]
+    SC["SpeechClient<br/>WebSocket, auto-reconnect<br/>relays every frame"]
+    FB["ServerFeedbackService<br/>eyes + queued speech playback"]
     EYE["OLED eyes"]
     BLINK["IdleBlinkService"]
   end
 
   subgraph MAC["Mac mini — server"]
-    WS["WebSocketSession<br/>buffers audio, finalises on 0.9 s idle"]
+    EP["Endpointer<br/>ring buffer + pre-roll"]
+    VAD["Silero VAD<br/>per 32 ms frame"]
+    TURN["Smart Turn v3<br/>is the sentence finished?"]
     STT["faster-whisper"]
-    PLAN["planner + action_rules<br/>regex over the whole utterance"]
-    LLM["Ollama<br/>plain-text reply (off by default)"]
+    PLAN["planner + action_rules"]
+    LLM["Ollama<br/>streamed tokens"]
+    SENT["SentenceAccumulator"]
     TTS["Piper (or macOS say)"]
-    REC["DatasetRecorder<br/>optional labelled capture"]
+    REC["DatasetRecorder"]
   end
 
   MIC -->|"sensor.audio"| SC
-  SC -->|"binary PCM"| WS
-  WS --> STT
+  SC -->|"binary PCM, continuous"| EP
+  EP <--> VAD
+  EP <--> TURN
+  EP -->|"complete utterance"| STT
   STT --> PLAN
   STT --> REC
-  PLAN -->|"rule matched → commands"| WS
+  PLAN -->|"rule matched"| TTS
+  PLAN -->|"movement"| SC
   PLAN -->|"no match → dialogue"| LLM
-  LLM --> TTS
-  TTS -->|"WAV bytes"| WS
-  WS -->|"JSON envelopes + WAV"| SC
+  LLM --> SENT
+  SENT -->|"sentence at a time"| TTS
+  TTS -->|"WAV per sentence"| SC
   SC -->|"perception.backend_*"| FB
-  FB --> DISP
-  DISP --> EYE
-  BLINK --> DISP
+  FB --> EYE
+  BLINK --> EYE
 ```
 
-**One turn, end to end.** The microphone publishes `sensor.audio` chunks on the event bus. The
-SpeechClient drops near-silence with an RMS check and streams the rest as binary frames. The server
-appends them to a buffer and finalises the utterance after 0.9 s of quiet, transcribes it, and
-tries the rule matcher. A match sends back command envelopes and ends the turn; no match hands the
-text to Ollama, whose plain-text reply is synthesised and returned as WAV. The robot plays the WAV,
-muting its own microphone while it does so, so Eva doesn't transcribe herself.
+**One turn, end to end.** The microphone publishes 32 ms frames and the SpeechClient relays every
+one of them — the robot makes no judgement about what is worth hearing. On the Mac, each frame goes
+to the Endpointer, which scores it with Silero VAD and keeps a rolling buffer. When speech starts,
+the buffer already holds the 300 ms *before* detection, so the start of the first word is recovered
+rather than clipped. When speech stops, Smart Turn decides whether the sentence actually sounds
+finished; if it doesn't, the window extends and a thinking pause no longer cuts you off.
 
-**What is deliberately simple right now.** There is one matching tier, not four. Endpointing is a
-server-side idle timer, not a voice gate on the Pi. The language model is prompted for plain text
-and is not constrained by the action registry. There is no arbiter, no epochs, and no capability
-handshake — the robot executes whatever command arrives.
+The completed utterance goes to Whisper, then to the rule matcher. A match speaks its confirmation
+and sends any movement as a command. No match becomes dialogue: Ollama's tokens are streamed into a
+sentence accumulator, and each sentence is synthesised and sent as it completes — so Eva starts
+talking while the rest of the reply is still being written. The robot mutes its own microphone
+during playback so she doesn't transcribe herself.
 
-**What is real and worth keeping.** Components publish to topics on an async bus and never call
-each other directly, so a slow network client can't block audio capture. Services with
-`start()`/`stop()` are managed by `ServiceRegistry`: started in registration order, stopped in
-reverse, and a failure is logged without taking the robot down — a missing display degrades one
-service instead of the whole robot. Every command reaching the wire passes `validate_command()` in
-`server/actions.py`, so the registry is already the single source of truth for what Eva can do,
-even though the models don't read from it yet.
+**Why the deciding happens on the Mac.** The robot used to drop quiet frames with an RMS threshold.
+That put the most consequential judgement in the pipeline on the weakest CPU, using a fixed
+threshold against a 1.5-second average, and it clipped word onsets — a frame is only sent *after*
+it crosses the threshold, and the beginning of a word is quiet. Continuous streaming costs 32 KB/s,
+which is nothing on a WiFi link, and it buys an important property: **audio that was never
+discarded can still be recovered.** Pre-roll is only possible because nothing was thrown away.
+
+**What is still simple.** There is one matching tier, not four. The language model is prompted for
+plain text rather than constrained by the action registry. There is no arbiter, no epochs, and no
+capability handshake — the robot executes whatever command arrives.
+
+**What is worth keeping.** Components publish to topics on an async bus and never call each other
+directly, so a slow network client can't block audio capture. Services with `start()`/`stop()` are
+managed by `ServiceRegistry`: started in registration order, stopped in reverse, and a failure is
+logged without taking the robot down — a missing display degrades one service instead of the whole
+robot. Every command reaching the wire passes `validate_command()` in `server/actions.py`, so the
+registry is the single source of truth for what Eva can do, even though the models don't read from
+it yet.
 
 ### Inside the robot
 
@@ -86,12 +102,21 @@ services, and handles shutdown. Behavior lives in services.
 | `behaviors/` | `ServerFeedbackService` (reacts to server replies), `IdleBlinkService` |
 | `actions/` | Eye expression and animation handlers |
 | `display/` | `EyeController` — OLED animation primitives |
+| `utils/` | Logging, and `AudioOutput` — the one owner of speaker output |
 
 ### Inside the server
 
 `app.py` exposes the REST routes and the WebSocket endpoint; `websocket_session.py` runs one
-session. `planner.py` decides commands-versus-dialogue, `action_rules.py` holds the phrase rules,
-and `actions.py` is the registry every command is validated against.
+session. Listening is split across three files: `voice_activity.py` (is this frame speech?),
+`turn_detection.py` (has the speaker finished?) and `endpointing.py` (the buffer and the decision).
+`planner.py` decides commands-versus-dialogue, `action_rules.py` holds the phrase rules, and
+`actions.py` is the registry every command is validated against. `sentences.py` cuts the streamed
+reply into speakable pieces.
+
+The detectors are injected into the endpointer rather than constructed by it, which is what lets
+the endpointing logic be tested with fakes in milliseconds and no model files. `make models`
+fetches the ~10 MB of ONNX weights; without them the server still runs, treating every frame as
+speech and ending turns on silence alone, and says so in the log.
 
 ---
 
@@ -103,7 +128,8 @@ the event bus, the validated command envelope — is chosen to make these additi
 **Capabilities become grammar.** The robot announces its hardware on connect. The server builds the
 models' JSON output schema from that manifest, so a model *cannot* emit an action the robot lacks.
 The registry and `validate_command()` are the half of this that already exists; the handshake and
-the schema-constrained prompt are the missing half.
+the schema-constrained prompt are the missing half. Ollama's `format` parameter accepts a JSON
+schema directly, which is the mechanism.
 
 **Four tiers instead of one.** An utterance would escalate through tiers that get smarter and
 slower, each able to end the turn:
@@ -127,8 +153,17 @@ ratio before building Tier 2 at all.
 when a new utterance begins; commands from older epochs are discarded, so a slow reply to the
 previous sentence never gets acted on.
 
+**Barge-in.** Eva currently goes deaf while speaking, which is the only way to avoid transcribing
+herself without acoustic echo cancellation. Real interruption needs AEC, and then the endpointer
+already has what it needs to detect that you have started talking over her.
+
 **Reflexes stay local.** Idle blinking already is. Obstacle stops and intent saccades would join it,
 so an unreachable server degrades Eva to a blinking, idling robot rather than a brick.
+
+**Streaming transcription is deliberately *not* on this list.** LocalAgreement-style streaming ASR
+confirms a prefix only once consecutive decodes agree, which costs latency; a batch decode of a
+2–3 s utterance is a few hundred milliseconds on an M2. For short conversational turns it would
+make Eva slower, not faster. It earns its place in long-form dictation, which is not this.
 
 See [protocol.md](protocol.md) for the wire contract and [roadmap.md](roadmap.md) for the order of
 work.

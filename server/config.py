@@ -5,15 +5,21 @@ from dataclasses import dataclass
 
 from endpointing import EndpointerSettings
 
+_SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
 
-def load_dotenv(path: str = ".env") -> None:
+
+def load_dotenv(path: str | None = None) -> None:
     """
-    Load KEY=VALUE lines from a .env file into the environment.
+    Load KEY=VALUE lines from server/.env into the environment.
 
     Existing environment variables win, so an inline override such as
     `EVA_PORT=9000 make server` still takes effect. Blank lines and lines
     starting with # are ignored, and surrounding quotes are stripped.
+
+    The file is found relative to this package, not the working directory,
+    so the server behaves the same however it was launched.
     """
+    path = path or os.path.join(_SERVER_DIR, ".env")
     if not os.path.isfile(path):
         return
     try:
@@ -34,6 +40,19 @@ def load_dotenv(path: str = ".env") -> None:
 def _env_str(key: str, default: str) -> str:
     v = os.getenv(key)
     return v if v is not None and v != "" else default
+
+
+def _env_path(key: str, default: str) -> str:
+    """
+    A filesystem path from the environment, resolved against server/.
+
+    Relative paths are anchored to this package rather than the working
+    directory: `make server` runs from server/ but a test runner may not, and
+    a model silently "missing" because of cwd degrades to the fallback
+    detector instead of failing loudly.
+    """
+    value = _env_str(key, default)
+    return value if os.path.isabs(value) else os.path.join(_SERVER_DIR, value)
 
 
 def _env_int(key: str, default: int) -> int:
@@ -105,16 +124,16 @@ def load_settings() -> Settings:
             max_extension_seconds=_env_float("EVA_MAX_EXTENSION_SECONDS", 4.0),
             max_utterance_seconds=_env_float("EVA_MAX_UTTERANCE_SECONDS", 30.0),
         ),
-        voice_activity_model_path=_env_str("EVA_VAD_MODEL_PATH", "models/silero_vad.onnx"),
+        voice_activity_model_path=_env_path("EVA_VAD_MODEL_PATH", "models/silero_vad.onnx"),
         turn_detection_enabled=_env_bool("EVA_TURN_DETECTION_ENABLED", True),
-        turn_detection_model_path=_env_str("EVA_TURN_MODEL_PATH", "models/smart_turn.onnx"),
+        turn_detection_model_path=_env_path("EVA_TURN_MODEL_PATH", "models/smart_turn.onnx"),
         turn_detection_threshold=_env_float("EVA_TURN_THRESHOLD", 0.5),
         speech_to_text_model=_env_str("EVA_SPEECH_TO_TEXT_MODEL", "small.en"),
         speech_to_text_stub_text=_env_str("EVA_SPEECH_TO_TEXT_STUB_TEXT", ""),
         text_to_speech_enabled=_env_bool("EVA_TEXT_TO_SPEECH_ENABLED", True),
         text_to_speech_engine=_env_str("EVA_TEXT_TO_SPEECH_ENGINE", "auto"),
-        piper_model_path=_env_str("EVA_PIPER_MODEL_PATH", "voices/en_GB-alba-medium.onnx"),
-        piper_config_path=_env_str("EVA_PIPER_CONFIG_PATH", "voices/en_GB-alba-medium.onnx.json"),
+        piper_model_path=_env_path("EVA_PIPER_MODEL_PATH", "voices/en_GB-alba-medium.onnx"),
+        piper_config_path=_env_path("EVA_PIPER_CONFIG_PATH", "voices/en_GB-alba-medium.onnx.json"),
         language_model_enabled=_env_bool("EVA_LANGUAGE_MODEL_ENABLED", False),
         ollama_base_url=_env_str("EVA_OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
         ollama_model=_env_str("EVA_OLLAMA_MODEL", "llama3.2:3b"),
