@@ -106,6 +106,8 @@ class Settings:
     ollama_max_reply_tokens: int
     ollama_keep_alive: str
 
+    debug_enabled: bool
+
     dataset_capture_enabled: bool
     dataset_directory: str
     dataset_max_bytes: int
@@ -140,6 +142,7 @@ def load_settings() -> Settings:
         ollama_timeout_seconds=_env_float("EVA_OLLAMA_TIMEOUT_SECONDS", 30.0),
         ollama_max_reply_tokens=_env_int("EVA_OLLAMA_MAX_REPLY_TOKENS", 80),
         ollama_keep_alive=_env_str("EVA_OLLAMA_KEEP_ALIVE", "30m"),
+        debug_enabled=_env_bool("EVA_DEBUG_ENABLED", False),
         dataset_capture_enabled=_env_bool("EVA_DATASET_CAPTURE_ENABLED", False),
         dataset_directory=_env_str("EVA_DATASET_DIR", "dataset"),
         dataset_max_bytes=_env_int("EVA_DATASET_MAX_BYTES", 2_000_000_000),

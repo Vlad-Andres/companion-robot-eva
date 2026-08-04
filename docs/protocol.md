@@ -13,6 +13,20 @@ The server listens on port **8002**.
 | `GET /v1/protocol` | Returns the protocol id the server speaks |
 | `GET /v1/actions` | Lists supported actions with their JSON arg schemas |
 | `WS /v1/websocket/audio` | The session: audio up, commands and speech down |
+| `GET /debug` | Live listening dashboard *(only when `EVA_DEBUG_ENABLED`)* |
+| `WS /v1/websocket/debug` | Telemetry feed for that dashboard |
+
+## Watching it work
+
+With `EVA_DEBUG_ENABLED=true`, open `http://<server>:8002/debug` while you talk to
+Eva. It shows the incoming level and Silero's speech probability frame by frame,
+highlights the exact audio each utterance captured — pre-roll included — and
+breaks down where the time went per stage, so "why did that feel slow?" has an
+answer instead of a guess. Stages over 800 ms are flagged.
+
+It is off by default, and when off the telemetry object is a no-op, so nothing
+is measured or allocated on the audio path. A dashboard that stops reading gets
+dropped events rather than being allowed to slow the pipeline.
 
 ## Session flow
 
@@ -120,6 +134,7 @@ See `server/config.py`:
 | `EVA_OLLAMA_TIMEOUT_SECONDS` | `30` | Request timeout |
 | `EVA_OLLAMA_MAX_REPLY_TOKENS` | `80` | Reply length cap |
 | `EVA_OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model resident |
+| `EVA_DEBUG_ENABLED` | `false` | Serve the live dashboard at `/debug` |
 | `EVA_DATASET_CAPTURE_ENABLED` | `false` | Record labelled training audio |
 | `EVA_DATASET_DIR` | `dataset` | Where captured samples are written |
 | `EVA_DATASET_MAX_BYTES` | `2000000000` | Capture pauses at this size |

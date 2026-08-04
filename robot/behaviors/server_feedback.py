@@ -67,6 +67,7 @@ class ServerFeedbackService:
             "perception.backend_audio": self._on_backend_audio,
             "perception.backend_listening": self._on_backend_listening,
             "perception.backend_waiting": self._on_backend_waiting,
+            "perception.backend_ready": self._on_backend_ready,
         }
 
     async def start(self) -> None:
@@ -204,6 +205,10 @@ class ServerFeedbackService:
         await self.action_dispatcher.dispatch_raw(
             [{"type": "play_eye_animation", "payload": {"animation": anim}}]
         )
+
+    async def _on_backend_ready(self, _event: Event) -> None:
+        """The turn is finished — stop looking like she is still working."""
+        self._cancel_thinking()
 
     async def _on_backend_waiting(self, _event: Event) -> None:
         if time.monotonic() < self._feedback_busy_until:

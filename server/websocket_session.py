@@ -12,7 +12,9 @@ from starlette.websockets import WebSocketDisconnect
 
 from config import Settings
 from dataset_recorder import DatasetRecorder
-from endpointing import Endpointer, frames_from_pcm16
+import numpy as np
+
+from endpointing import FRAME_SECONDS, SAMPLE_RATE, Endpointer, frames_from_pcm16
 from language_model import LanguageModelClient
 from log import logger
 from planner import plan_from_transcript
@@ -32,9 +34,10 @@ from protocol import (
     speech_start_message,
 )
 from speech_to_text import AudioFormat, SpeechToTextEngine
+from telemetry import Telemetry
 from text_to_speech import TextToSpeechEngine
 from turn_detection import TurnDetector
-from voice_activity import VoiceActivityDetector
+from voice_activity import FRAME_SAMPLES, VoiceActivityDetector
 
 _log = logger("eva.websocket_session")
 
@@ -59,6 +62,7 @@ class WebSocketSession:
     audio_format: AudioFormat
     audio_queue: asyncio.Queue[bytes | _AudioEnd]
     endpointer: Endpointer
+    telemetry: Telemetry
     frame_carry: bytes       # partial frame left over from the last read
     ignore_until: float
     running: bool
@@ -69,13 +73,18 @@ async def _send_json(websocket: WebSocket, message: dict[str, Any]) -> None:
 
 
 async def _finalize_utterance(session: WebSocketSession, websocket: WebSocket, utterance_id: str, audio: bytes) -> None:
-    text = session.speech_to_text.transcribe(audio, session.audio_format).strip()
+    # Offloaded: transcribe() is CPU-bound and takes ~1s on a small model, which
+    # would otherwise stall the receive loop and back audio up in the socket.
+    with session.telemetry.timed("stt"):
+        text = (await asyncio.to_thread(session.speech_to_text.transcribe, audio, session.audio_format)).strip()
     if not text:
         return
 
     await _send_json(websocket, transcript_final_message(utterance_id=utterance_id, text=text, session_id=session.session_id))
 
-    plan = plan_from_transcript(text)
+    with session.telemetry.timed("plan"):
+        plan = plan_from_transcript(text)
+    session.telemetry.emit("transcript", text=text, rule=plan.rule_key)
 
     session.dataset_recorder.record(
         audio=audio,
@@ -120,7 +129,9 @@ async def _speak(session: WebSocketSession, websocket: WebSocket, text: str) -> 
 
     speech_id = new_id("speech")
     await _send_json(websocket, speech_start_message(speech_id=speech_id, text=text, session_id=session.session_id))
-    wav = await asyncio.to_thread(session.text_to_speech.synthesize_wav, text)
+    session.telemetry.emit("reply", text=text)
+    with session.telemetry.timed("tts"):
+        wav = await asyncio.to_thread(session.text_to_speech.synthesize_wav, text)
     if wav:
         await websocket.send_bytes(wav)
     await _send_json(websocket, speech_end_message(speech_id=speech_id, session_id=session.session_id))
@@ -143,11 +154,21 @@ async def _stream_reply(session: WebSocketSession, websocket: WebSocket, prompt:
         language_model_requested_message(request_id=request_id, model=session.settings.ollama_model, session_id=session.session_id),
     )
 
+    session.telemetry.emit("state", state="thinking")
+
     accumulator = SentenceAccumulator()
     spoke = False
+    started = time.perf_counter()
     try:
         async for piece in session.language_model.stream(system_prompt=SYSTEM_PROMPT, user_text=prompt):
             for sentence in accumulator.add(piece):
+                if not spoke:
+                    # The number that decides whether Eva feels responsive:
+                    # how long until she can start saying anything at all.
+                    session.telemetry.emit(
+                        "stage", stage="llm_first_sentence",
+                        ms=round((time.perf_counter() - started) * 1000, 1),
+                    )
                 await _speak(session, websocket, sentence)
                 spoke = True
     except Exception as exc:
@@ -158,11 +179,30 @@ async def _stream_reply(session: WebSocketSession, websocket: WebSocket, prompt:
         await _speak(session, websocket, remainder)
         spoke = True
 
+    session.telemetry.emit(
+        "stage", stage="llm_total", ms=round((time.perf_counter() - started) * 1000, 1)
+    )
+
     if not spoke:
         _log.info("Language model produced no reply.")
 
     await _send_json(websocket, language_model_result_message(request_id=request_id, session_id=session.session_id))
     await _send_json(websocket, status_message(state="ready", session_id=session.session_id))
+
+
+def report_audio_task_failure(task: asyncio.Task) -> None:
+    """
+    Say so when the audio loop dies.
+
+    Without this an unhandled exception in the task leaves the session simply
+    deaf: audio keeps arriving, nothing processes it, and nothing is logged.
+    That is indistinguishable from "the robot stopped hearing me".
+    """
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        _log.error("Audio loop stopped: %r", error)
 
 
 async def _audio_loop(session: WebSocketSession, websocket: WebSocket) -> None:
@@ -196,11 +236,28 @@ async def _audio_loop(session: WebSocketSession, websocket: WebSocket) -> None:
             was_speaking = session.endpointer.in_speech
             utterance = session.endpointer.push(frame)
 
+            if session.telemetry.enabled:
+                session.telemetry.frame(
+                    rms=float(np.sqrt(np.mean(np.square(frame)))),
+                    speech_probability=session.endpointer.last_speech_probability,
+                    in_speech=session.endpointer.in_speech,
+                )
+
             if session.endpointer.in_speech and not was_speaking:
                 await _send_json(websocket, status_message(state="listening", session_id=session.session_id))
+                session.telemetry.emit("state", state="listening")
 
             if utterance is not None:
+                frame_count = len(utterance) // 2 // FRAME_SAMPLES
+                session.telemetry.emit(
+                    "utterance",
+                    seconds=round(len(utterance) / 2 / SAMPLE_RATE, 3),
+                    frames=frame_count,
+                    preroll=round(session.endpointer.preroll_frames_used * FRAME_SECONDS, 3),
+                )
                 await _finalize_utterance(session, websocket, new_id("utterance"), utterance)
+                session.telemetry.emit("turn_end")
+                session.telemetry.emit("state", state="idle")
                 if time.monotonic() < session.ignore_until:
                     # Replying invalidates anything captured while we spoke.
                     session.frame_carry = b""
@@ -208,7 +265,7 @@ async def _audio_loop(session: WebSocketSession, websocket: WebSocket) -> None:
                     break
 
 
-async def run_websocket_session(websocket: WebSocket, *, settings: Settings, speech_to_text: SpeechToTextEngine, text_to_speech: TextToSpeechEngine, language_model: LanguageModelClient, dataset_recorder: DatasetRecorder, voice_activity: VoiceActivityDetector, turn_detector: TurnDetector) -> None:
+async def run_websocket_session(websocket: WebSocket, *, settings: Settings, speech_to_text: SpeechToTextEngine, text_to_speech: TextToSpeechEngine, language_model: LanguageModelClient, dataset_recorder: DatasetRecorder, voice_activity: VoiceActivityDetector, turn_detector: TurnDetector, telemetry: Telemetry) -> None:
     await websocket.accept()
     session = WebSocketSession(
         session_id=_new_session_id(),
@@ -222,6 +279,7 @@ async def run_websocket_session(websocket: WebSocket, *, settings: Settings, spe
         # Each connection gets its own endpointer: the detectors carry state
         # between frames and must not be shared across sessions.
         endpointer=Endpointer(voice_activity, turn_detector, settings.endpointer),
+        telemetry=telemetry,
         frame_carry=b"",
         ignore_until=0.0,
         running=True,
@@ -231,6 +289,7 @@ async def run_websocket_session(websocket: WebSocket, *, settings: Settings, spe
     await _send_json(websocket, status_message(state="ready", session_id=session.session_id))
 
     audio_task = asyncio.create_task(_audio_loop(session, websocket))
+    audio_task.add_done_callback(report_audio_task_failure)
     try:
         while True:
             message = await websocket.receive()

@@ -9,8 +9,9 @@ Published events (all with source "speech_client"):
     perception.backend_command   — dict, one command envelope to execute
     perception.backend_speech    — str, reply text the server is about to speak
     perception.backend_audio     — bytes, synthesized WAV to play
-    perception.backend_listening — None, audio is being streamed
-    perception.backend_waiting   — None, still waiting on the server
+    perception.backend_listening — None, the server detected speech
+    perception.backend_waiting   — None, the server is thinking
+    perception.backend_ready     — None, the turn is over
 """
 
 from __future__ import annotations
@@ -47,8 +48,6 @@ class SpeechClient(BasePerceptionClient):
         self._websocket: Optional[websockets.WebSocketClientProtocol] = None
         self._outbox: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)
         self._manager_task: Optional[asyncio.Task] = None
-        self._awaiting_backend: bool = False
-        self._waiting_task: Optional[asyncio.Task] = None
         self._send_allowed = asyncio.Event()
         self._send_allowed.set()
 
@@ -123,11 +122,6 @@ class SpeechClient(BasePerceptionClient):
             if self._websocket:
                 try:
                     await self._websocket.send(chunk)
-                    if not self._awaiting_backend:
-                        self._awaiting_backend = True
-                        if self._waiting_task and not self._waiting_task.done():
-                            self._waiting_task.cancel()
-                        self._waiting_task = asyncio.create_task(self._emit_waiting())
                 except Exception as e:
                     log.error("Failed to send chunk: %s", e)
                     raise
@@ -148,26 +142,12 @@ class SpeechClient(BasePerceptionClient):
     async def _on_backend_audio_done(self, _event: Event) -> None:
         self._send_allowed.set()
 
-    async def _emit_waiting(self) -> None:
-        try:
-            await asyncio.sleep(0.9)
-            if self._awaiting_backend:
-                await self.event_bus.publish(
-                    Event(topic="perception.backend_waiting", data=None, source=self.name)
-                )
-        except asyncio.CancelledError:
-            pass
-
     async def _consumer_loop(self) -> None:
         """Listens for transcription results from the server."""
         if not self._websocket:
             return
         async for message in self._websocket:
             try:
-                self._awaiting_backend = False
-                if self._waiting_task and not self._waiting_task.done():
-                    self._waiting_task.cancel()
-
                 if isinstance(message, (bytes, bytearray)):
                     await self.event_bus.publish(
                         Event(topic="perception.backend_audio", data=bytes(message), source=self.name)
@@ -225,12 +205,19 @@ class SpeechClient(BasePerceptionClient):
             return
 
         if message_type == "status":
-            # The server detected speech: it decides this, not the robot, so
-            # the eyes now react to actual speech rather than to loudness.
-            if message.get("state") == "listening":
-                await self.event_bus.publish(
-                    Event(topic="perception.backend_listening", data=None, source=self.name)
-                )
+            # Eva's expression follows the server's real state. The robot used
+            # to infer "waiting" from having sent audio, which was fine while a
+            # gate meant audio only moved when you spoke — but now that every
+            # frame is streamed, that inference would leave her permanently
+            # thinking.
+            state = message.get("state")
+            topic = {
+                "listening": "perception.backend_listening",
+                "thinking": "perception.backend_waiting",
+                "ready": "perception.backend_ready",
+            }.get(str(state or ""))
+            if topic:
+                await self.event_bus.publish(Event(topic=topic, data=None, source=self.name))
             return
 
         if message_type == "error":

@@ -65,6 +65,11 @@ class Endpointer:
         self._silent_frames = 0
         self._extended_seconds = 0.0
 
+        # Reported, not used: the debug dashboard shows these so the decisions
+        # made in here are visible from outside.
+        self.last_speech_probability = 0.0
+        self.preroll_frames_used = 0
+
     # ------------------------------------------------------------------
     # State the session reports to the robot
     # ------------------------------------------------------------------
@@ -103,7 +108,8 @@ class Endpointer:
 
         Returns the completed utterance as 16-bit PCM bytes, or None.
         """
-        is_speech = self._vad.speech_probability(frame) >= self.settings.speech_threshold
+        self.last_speech_probability = self._vad.speech_probability(frame)
+        is_speech = self.last_speech_probability >= self.settings.speech_threshold
 
         if not self._in_speech:
             self._preroll.append(frame)
@@ -127,6 +133,7 @@ class Endpointer:
         # Everything still in the ring buffer predates the detection, so it
         # holds the beginning of the word that triggered it.
         self._speech = list(self._preroll)
+        self.preroll_frames_used = len(self._preroll)
         self._preroll.clear()
         self._in_speech = True
         self._silent_frames = 0
