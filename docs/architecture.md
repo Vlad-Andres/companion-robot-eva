@@ -12,6 +12,9 @@ This page has two halves. **[What runs today](#what-runs-today)** describes the 
 **[Where this is going](#where-this-is-going)** describes the design being built toward. Nothing in
 the second half is implemented yet — check [roadmap.md](roadmap.md) for the order of work.
 
+For the call-by-call detail — which file, which function, in what order — see
+[flows.md](flows.md), which traces each path as a sequence diagram.
+
 ---
 
 ## What runs today

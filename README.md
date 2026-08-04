@@ -97,6 +97,7 @@ server/                     Mac mini brain
 ## Docs
 
 - [Architecture](docs/architecture.md) — how a turn flows today, and the design being built toward
+- [Flows](docs/flows.md) — sequence diagrams naming every file and function on each path
 - [Protocol](docs/protocol.md) — WebSocket and REST contract, message shapes, configuration
 - [Roadmap](docs/roadmap.md) — what's built, what's next, known gaps
 - [Training data](docs/training-data.md) — capturing labelled audio for the on-device intent model
