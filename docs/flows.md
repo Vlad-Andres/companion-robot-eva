@@ -12,6 +12,7 @@ the wiring.
 - [The components](#the-components)
 - [Startup — the server](#startup--the-server)
 - [Startup — the robot](#startup--the-robot)
+- [The handshake](#the-handshake)
 - [A command: "turn left"](#a-command-turn-left)
 - [A conversation: "what do you want to talk about"](#a-conversation-what-do-you-want-to-talk-about)
 - [A thinking pause](#a-thinking-pause)
@@ -90,13 +91,15 @@ subgraph MAC["Mac mini — server/"]
   end
 
   subgraph THINK["deciding"]
+    CAP["capabilities.py<br/><i>what this robot has</i>"]
     PLAN["planner.py"]
     RULES["action_rules.py<br/><i>phrase regexes</i>"]
-    ACT["actions.py<br/><i>registry + validation</i>"]
-    LLM["language_model.py<br/><i>Ollama, streamed</i>"]
+    ACT["actions.py<br/><i>registry, validation, schema</i>"]
+    LLM["language_model.py<br/><i>Ollama, streamed + constrained</i>"]
   end
 
   subgraph SPEAK["speaking"]
+    RS["reply_stream.py<br/><i>say vs commands</i>"]
     SENT["sentences.py<br/><i>tokens → sentences</i>"]
     TTS["text_to_speech.py<br/><i>Piper, or macOS say</i>"]
   end
@@ -111,11 +114,16 @@ subgraph MAC["Mac mini — server/"]
   EP <--> VAD
   EP <--> TURN
   WS --> STT
+  WS --> CAP
+  CAP --> ACT
   WS --> PLAN
   PLAN --> RULES
   PLAN --> ACT
   WS --> LLM
-  LLM --> SENT
+  ACT -- "output schema" --> LLM
+  LLM --> RS
+  RS --> SENT
+  RS -- "commands" --> ACT
   SENT --> TTS
   WS --> TTS
   WS --> PROTO
@@ -208,6 +216,49 @@ sequenceDiagram
 
 ---
 
+## The handshake
+
+Before any audio. The robot says what it has; the server says what it will therefore
+ask for. Everything after this — the rules, the model's output grammar — is filtered
+through the answer.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SC as speech_client.py
+    participant WS as websocket_session.py
+    participant CAP as capabilities.py
+    participant ACT as actions.py
+
+    SC->>WS: connect
+    WS->>SC: hello — protocol eva/1, supported [eva/1]
+    WS->>SC: status ready
+    Note over WS: Sent immediately, not held for the manifest:<br/>firmware older than this never sends one
+
+    SC->>WS: capabilities — sensors [microphone],<br/>actuators [base, speaker, eyes]
+    WS->>CAP: negotiate_protocol()
+    alt no shared version
+        CAP-->>WS: ProtocolMismatch
+        WS->>SC: error protocol_unsupported, close 1002
+        Note over WS,SC: Stops rather than limps — audio nobody<br/>answers is harder to diagnose
+    else agreed
+        CAP-->>WS: "eva/1"
+    end
+
+    WS->>CAP: parse_capabilities()
+    CAP-->>WS: RobotCapabilities
+    WS->>ACT: available_action_names(capabilities)
+    ACT-->>WS: {speak, move_base}
+    WS->>SC: capabilities.ack — accepted, actions, unknown
+
+    Note over WS: session.allowed_actions is now the gate for<br/>the rules, the model's schema, and validate_command()
+```
+
+If the robot never sends a manifest, `ASSUMED_CAPABILITIES` stands in and grants
+everything — so this diagram is skippable and nothing downstream changes.
+
+---
+
 ## A command: "turn left"
 
 The fast path. A rule matches, so no language model is involved at all.
@@ -279,54 +330,73 @@ sequenceDiagram
 
 ---
 
-## A conversation: "what do you want to talk about"
+## A conversation: "could you come over here"
 
 No rule matches, so it becomes dialogue — and the reply is spoken while it is
-still being written.
+still being written, even though the reply is a JSON object.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant WS as websocket_session.py
     participant PL as planner.py
+    participant ACT as actions.py
     participant LLM as language_model.py
     participant OL as ollama
+    participant RS as reply_stream.py
     participant SA as sentences.py
     participant TTS as text_to_speech.py
     participant SC as speech_client.py
-    participant AO as utils/audio.py
 
     Note over WS: Utterance already endpointed<br/>and transcribed, as above
 
-    WS->>PL: plan_from_transcript(text)
+    WS->>PL: plan_from_transcript(text, allowed)
     PL-->>WS: no rule matched → dialogue
     WS->>WS: _stream_reply()
     WS->>SC: status "thinking"
-    Note over SC: eyes start the thinking loop
 
-    WS->>LLM: stream(system_prompt, user_text)
-    LLM->>OL: POST /api/chat, stream true,<br/>num_predict 80, keep_alive 30m
+    WS->>ACT: reply_schema(capabilities)
+    ACT-->>WS: {say, commands[move_base]}
+    Note over ACT: The enum holds only what this robot has.<br/>No base, no move_base — no schema at all.
+
+    WS->>LLM: stream(prompt, user_text, response_format=schema)
+    LLM->>OL: POST /api/chat, stream true,<br/>format schema, temperature 0.2
 
     loop token by token
         OL-->>LLM: token
         LLM-->>WS: token
-        WS->>SA: add(token)
-        alt a sentence just closed
-            SA-->>WS: "I'd love to hear about your day."
-            WS->>TTS: synthesize_wav(sentence)
-            TTS-->>WS: WAV
-            WS->>SC: speech.start + WAV + speech.end
-            SC->>AO: play_speech(wav)
-            Note over AO: Eva is already talking while<br/>the model writes the next sentence
-        else mid-sentence
-            SA-->>WS: nothing yet
+        WS->>RS: add(token)
+        alt inside the "say" string
+            RS-->>WS: decoded characters
+            WS->>SA: add(text)
+            alt a sentence just closed
+                SA-->>WS: "Of course, on my way."
+                WS->>TTS: synthesize_wav(sentence)
+                TTS-->>WS: WAV
+                WS->>SC: speech.start + WAV + speech.end
+                Note over SC: Eva is already talking while the<br/>model is still writing the commands
+            end
+        else braces, keys, the command list
+            RS-->>WS: nothing — never spoken aloud
         end
     end
 
-    WS->>SA: finish()
-    SA-->>WS: any trailing text
+    WS->>RS: finish()
+    alt the object closed
+        RS-->>WS: commands [move_base come_here]
+    else cut off by the token budget
+        RS-->>WS: truncated — the speech survived, the commands did not
+    end
+
+    WS->>ACT: validate_command(command, allowed)
+    ACT-->>WS: normalised, or None
+    WS->>SC: command move_base
     WS->>SC: language_model.result, status "ready"
 ```
+
+The grammar guarantees the *shape* of what the model emits, not its sense — so
+`validate_command()` is still the gate, and it is the same gate the rule path
+goes through.
 
 ---
 
@@ -449,6 +519,9 @@ sequenceDiagram
 | First word missing | `endpointing.py` — `preroll_seconds` |
 | Nothing transcribed | `voice_activity.py` — is the model loaded? check the startup log |
 | Eva never replies | `EVA_LANGUAGE_MODEL_ENABLED`, and whether the Ollama model name exists |
+| Eva talks but never moves | the `capabilities.ack` — is `move_base` in its `actions`? |
+| She says she is moving, then doesn't | the log for "Rejected command from the model" |
+| Commands vanish on long replies | "cut off before its commands" in the log — raise `EVA_OLLAMA_MAX_REPLY_TOKENS` |
 | Wrong voice | `text_to_speech.py` — the startup log says `piper` or falls back to `say` |
 | Too quiet or too loud | `robot/config.py` — `AudioConfig.volume_percent` |
 | Eva talks over herself | `ignore_until` in `websocket_session.py`, `_send_allowed` in `speech_client.py` |
