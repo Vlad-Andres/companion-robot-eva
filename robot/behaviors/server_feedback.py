@@ -135,11 +135,18 @@ class ServerFeedbackService:
 
         if name == "move_base":
             movement = str(args.get("command") or "")
-            # No motor handler exists yet; surface the command so it is visible
-            # during bring-up rather than silently dropped.
-            log.info("Command move_base: %s (no motor handler yet)", movement)
+            # Movement goes through the dispatcher like every other action, so
+            # it obeys the same registration and error handling. If no base is
+            # wired, the handler holds a null driver and logs — the failure is
+            # one capability, not a crash.
             await self.action_dispatcher.dispatch_raw(
-                [{"type": "set_eye_expression", "payload": {"expression": "curious"}}]
+                [
+                    {"type": "move_base", "payload": {"command": movement}},
+                    {
+                        "type": "set_eye_expression",
+                        "payload": {"expression": "sleep" if movement == "stop" else "curious"},
+                    },
+                ]
             )
             return
 

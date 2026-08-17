@@ -91,6 +91,82 @@ class AudioConfig:
 
 
 @dataclass
+class BaseConfig:
+    """
+    The two-wheeled base, on a TB6612FNG dual H-bridge.
+
+    Pins are BCM numbers and deliberately avoid everything the WM8960 audio
+    HAT claims (GPIO 2, 3, 17, 18, 19, 20, 21) and the UART the range sensor
+    uses (14, 15). GPIO 12 and 13 are the Pi's hardware PWM channels, which
+    give steadier motor speed than a software-timed pulse. See HARDWARE.md.
+
+    Set enabled = False on a robot with no motors wired; every layer above
+    keeps working and movement is logged instead of driven.
+    """
+    enabled: bool = True
+
+    left_pwm_pin: int = 12      # PWMA
+    left_in1_pin: int = 5       # AIN1
+    left_in2_pin: int = 6       # AIN2
+    right_pwm_pin: int = 13     # PWMB
+    right_in1_pin: int = 23     # BIN1
+    right_in2_pin: int = 24     # BIN2
+    standby_pin: int = 25       # STBY — low and the chip ignores everything
+
+    pwm_frequency_hz: int = 1000
+
+    # A motor wired the other way round makes "forward" spin the robot. The
+    # fix belongs here rather than in swapped wires.
+    invert_left: bool = False
+    invert_right: bool = False
+
+    # Fractions of full power. Low enough that a first run across a wooden
+    # floor does not end at the skirting board.
+    drive_speed: float = 0.55
+    # Pivot turns fight more friction than driving straight, so a turn that
+    # feels the same speed needs a little more power.
+    turn_speed: float = 0.60
+
+
+@dataclass
+class RangeSensorConfig:
+    """
+    Forward-facing distance sensor — a US-100 in UART mode.
+
+    Optional: an absent or unreadable sensor disables the obstacle reflex and
+    is reported in the log, rather than stopping the robot from moving at all.
+    Enabling the UART needs `sudo raspi-config nonint do_serial_hw 0` and the
+    login console turned off — see HARDWARE.md.
+    """
+    enabled: bool = True
+    port: str = "/dev/serial0"
+    baud_rate: int = 9600
+    poll_interval_seconds: float = 0.1
+
+    # Refuse to drive forward closer than this.
+    stop_distance_mm: int = 250
+    # And do not consider the way clear again until there is this much room.
+    # The gap between the two is what stops a sensor sitting on the threshold
+    # from starting and stopping the motors several times a second.
+    clear_distance_mm: int = 350
+    # The US-100 tops out around 4.5 m; anything beyond is a bad reading.
+    max_valid_mm: int = 4500
+
+
+@dataclass
+class EmergencyStopConfig:
+    """
+    A physical stop, on the button the WM8960 HAT already has.
+
+    Voice cannot reach Eva while she is speaking — the microphone is muted so
+    she does not transcribe herself — so for those few seconds a spoken "stop"
+    has nowhere to land. A button always does.
+    """
+    enabled: bool = True
+    button_pin: int = 17    # the HAT's onboard button
+
+
+@dataclass
 class RuntimeConfig:
     """Configuration for the main agent loop."""
     startup_animation: str = "WAKEUP"   # Eye animation on startup
@@ -116,3 +192,6 @@ class RobotConfig:
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     idle_blink: IdleBlinkConfig = field(default_factory=IdleBlinkConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
+    base: BaseConfig = field(default_factory=BaseConfig)
+    range_sensor: RangeSensorConfig = field(default_factory=RangeSensorConfig)
+    emergency_stop: EmergencyStopConfig = field(default_factory=EmergencyStopConfig)

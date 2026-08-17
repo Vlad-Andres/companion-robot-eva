@@ -8,3 +8,5 @@ pillow==12.2.0         # Frame rendering for the eyes
 numpy==2.4.4           # Audio buffer maths
 pyaudio==0.2.14        # Microphone capture
 websockets==12.0       # Streaming link to the server
+gpiozero==2.0.1        # Motor driver pins — TB6612FNG, emergency stop button
+pyserial==3.5          # US-100 range sensor over UART

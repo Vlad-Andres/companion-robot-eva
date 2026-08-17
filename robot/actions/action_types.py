@@ -37,6 +37,7 @@ class ActionType(str, enum.Enum):
     """
     SET_EYE_EXPRESSION = "set_eye_expression"
     PLAY_EYE_ANIMATION = "play_eye_animation"
+    MOVE_BASE = "move_base"
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +71,20 @@ class PlayEyeAnimationPayload:
     animation: str
 
 
+@dataclass
+class MoveBasePayload:
+    """
+    Payload for the MOVE_BASE action.
+
+    Attributes:
+        command: One of the movements in the server's action registry —
+                 stop, forward, backward, turn_left, turn_right, come_here.
+                 The vocabulary is defined once, in server/actions.py, and
+                 arrives here already validated against it.
+    """
+    command: str
+
+
 # ---------------------------------------------------------------------------
 # Top-level Action container
 # ---------------------------------------------------------------------------
@@ -97,6 +112,7 @@ class Action:
 _ACTION_REGISTRY: Dict[str, Type] = {
     ActionType.SET_EYE_EXPRESSION: SetEyeExpressionPayload,
     ActionType.PLAY_EYE_ANIMATION: PlayEyeAnimationPayload,
+    ActionType.MOVE_BASE: MoveBasePayload,
 }
 
 
