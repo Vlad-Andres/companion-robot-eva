@@ -14,6 +14,7 @@ the wiring.
 - [Startup — the robot](#startup--the-robot)
 - [The handshake](#the-handshake)
 - [A command: "turn left"](#a-command-turn-left)
+- [Moving, and stopping](#moving-and-stopping)
 - [A conversation: "what do you want to talk about"](#a-conversation-what-do-you-want-to-talk-about)
 - [A thinking pause](#a-thinking-pause)
 - [Not hearing herself](#not-hearing-herself)
@@ -45,11 +46,16 @@ subgraph PI["Raspberry Pi 4 — robot/"]
   end
 
   MIC["sensors/microphone_sensor.py<br/><i>pyaudio → 512-sample frames</i>"]
+  RNG["sensors/range_sensor.py<br/><i>US-100 over UART</i>"]
   SC["perception/speech_client.py<br/><i>owns the WebSocket</i>"]
   FB["behaviors/server_feedback.py<br/><i>reacts to the server</i>"]
   BLINK["behaviors/idle_blink.py"]
+  GRD["behaviors/obstacle_guard.py<br/><i>local reflex</i>"]
+  SAFE["behaviors/motion_safety.py<br/><i>link loss, button</i>"]
   EYEH["actions/eye_expression_handler.py"]
+  MBH["actions/move_base_handler.py<br/><i>owns the current motion</i>"]
   EYEC["display/eye_controller.py<br/><i>OLED over I2C</i>"]
+  MOT["motion/tb6612.py<br/><i>H-bridge over GPIO</i>"]
   AUD["utils/audio.py<br/><i>AudioOutput — all sound</i>"]
 
   MAIN --> RT
@@ -67,7 +73,16 @@ subgraph PI["Raspberry Pi 4 — robot/"]
   BUS -.-> DISP
   FB --> DISP
   DISP --> EYEH
+  DISP --> MBH
   EYEH --> EYEC
+  MBH --> MOT
+  RNG -. "sensor.range" .-> BUS
+  BUS -.-> GRD
+  GRD --> MBH
+  SAFE --> MBH
+  REG -.-> RNG
+  REG -.-> GRD
+  REG -.-> SAFE
   FB --> AUD
   EYEH --> AUD
 end
@@ -330,6 +345,69 @@ sequenceDiagram
 
 ---
 
+## Moving, and stopping
+
+Everything above ends at `perception.backend_command`. This is what happens
+after it, and it is all on the Pi.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SC as speech_client.py
+    participant Bus as event_bus.py
+    participant FB as server_feedback.py
+    participant DISP as action_dispatcher.py
+    participant MB as move_base_handler.py
+    participant DRV as motion/tb6612.py
+    participant RS as sensors/range_sensor.py
+    participant GRD as obstacle_guard.py
+
+    Note over SC: command move_base {command: forward}
+
+    SC->>Bus: perception.backend_command
+    Bus->>FB: _on_backend_command()
+    FB->>DISP: dispatch_raw([move_base, set_eye_expression])
+    DISP->>MB: handle()
+    MB->>MB: _speeds_for("forward") → (0.55, 0.55)
+    MB->>DRV: drive(0.55, 0.55)
+    DRV->>DRV: STBY high, IN1/IN2 per direction, PWM per speed
+
+    Note over MB: Latched. "Forward" means keep going,<br/>so _current stays "forward" until something changes it
+
+    loop every 100 ms
+        RS->>RS: write 0x55, read 2 bytes
+        RS->>Bus: sensor.range (mm)
+        Bus->>GRD: _on_range()
+    end
+
+    Note over GRD: 240 mm — under the 250 mm stop threshold
+    GRD->>MB: set_blocked(True)
+    MB->>DRV: stop()
+    Note over MB: _current is still "forward" —<br/>held, not cancelled
+
+    Note over GRD: you move out of the way: 900 mm,<br/>past the 350 mm clear threshold
+    GRD->>MB: set_blocked(False)
+    MB->>DRV: drive(0.55, 0.55)
+    Note over MB: resumes what was actually asked for
+```
+
+**Four things stop the wheels**, and only the first comes from the server:
+
+| What | Where it is handled | Works without the network |
+|---|---|---|
+| A `stop` command | `action_rules.py` → `move_base_handler.py` | no |
+| Something in front | `obstacle_guard.py` | **yes** |
+| The server disappears | `motion_safety.py` | **yes** |
+| The HAT button (GPIO 17) | `motion_safety.py` | **yes** |
+| Shutdown / Ctrl+C | `runtime.py · _shutdown()` | **yes** |
+
+The connection-loss stop is deliberately *not* a timeout. A commanded movement
+is never cut short while the server is there, because "forward" should mean
+forward — but a robot whose server has vanished cannot be told to stop, so it
+stops itself.
+
+---
+
 ## A conversation: "could you come over here"
 
 No rule matches, so it becomes dialogue — and the reply is spoken while it is
@@ -522,6 +600,11 @@ sequenceDiagram
 | Eva talks but never moves | the `capabilities.ack` — is `move_base` in its `actions`? |
 | She says she is moving, then doesn't | the log for "Rejected command from the model" |
 | Commands vanish on long replies | "cut off before its commands" in the log — raise `EVA_OLLAMA_MAX_REPLY_TOKENS` |
+| "forward" spins her on the spot | one motor is reversed — `invert_left` / `invert_right` in `robot/config.py` |
+| Nothing moves at all | `tools/motor_check.py`; then STBY, then the common ground between battery and Pi |
+| She stops for no reason | `tools/range_check.py` — a reading under `stop_distance_mm` holds forward motion |
+| She won't reverse off a wall | she should — `set_blocked` holds forward only. Check the log for the held movement |
+| She keeps going after "stop" | was she speaking? The microphone is muted then. Use the HAT button |
 | Wrong voice | `text_to_speech.py` — the startup log says `piper` or falls back to `say` |
 | Too quiet or too loud | `robot/config.py` — `AudioConfig.volume_percent` |
 | Eva talks over herself | `ignore_until` in `websocket_session.py`, `_send_allowed` in `speech_client.py` |

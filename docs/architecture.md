@@ -28,6 +28,10 @@ flowchart LR
     FB["ServerFeedbackService<br/>eyes + queued speech playback"]
     EYE["OLED eyes"]
     BLINK["IdleBlinkService"]
+    MB["MoveBaseHandler<br/>the one owner of the wheels"]
+    RNG["RangeSensor<br/>US-100"]
+    GUARD["ObstacleGuard<br/>local reflex"]
+    WHEELS["TB6612 → 2 wheels"]
   end
 
   subgraph MAC["Mac mini — server"]
@@ -66,6 +70,10 @@ flowchart LR
   SC -->|"perception.backend_*"| FB
   FB --> EYE
   BLINK --> EYE
+  FB -->|"move_base"| MB
+  MB --> WHEELS
+  RNG -->|"sensor.range"| GUARD
+  GUARD -->|"hold / release forward"| MB
 ```
 
 **One turn, end to end.** The microphone publishes 32 ms frames and the SpeechClient relays every
@@ -98,7 +106,10 @@ behind it in case one tries. A robot that sends no manifest is assumed to have e
 how firmware older than the handshake keeps working unchanged.
 
 **What is still simple.** There is one matching tier, not four. There is no arbiter and no epochs.
-Commands land just after the sentence that announces them, rather than with it.
+Commands land just after the sentence that announces them, rather than with it. Movement is
+open-loop — no encoders, so Eva knows what she asked the wheels to do and nothing about what they
+did, which is what blocks mapping (see
+[proposals/occupancy-mapping.md](proposals/occupancy-mapping.md)).
 
 **What is worth keeping.** Components publish to topics on an async bus and never call each other
 directly, so a slow network client can't block audio capture. Services with `start()`/`stop()` are
@@ -116,12 +127,24 @@ services, and handles shutdown. Behavior lives in services.
 | Directory | Role |
 |---|---|
 | `core/` | Event bus, service registry, action dispatcher |
-| `sensors/` | Hardware input producers (microphone) |
+| `sensors/` | Hardware input producers — microphone, forward range |
 | `perception/` | `SpeechClient` — owns the WebSocket session with the server |
-| `behaviors/` | `ServerFeedbackService` (reacts to server replies), `IdleBlinkService` |
-| `actions/` | Eye expression and animation handlers |
+| `behaviors/` | `ServerFeedbackService`, `IdleBlinkService`, `ObstacleGuard`, `MotionSafetyService` |
+| `actions/` | Eye expression, animation, and `move_base` handlers |
 | `display/` | `EyeController` — OLED animation primitives |
+| `motion/` | `BaseDriver` — the TB6612, and the null driver that stands in for it |
 | `utils/` | Logging, and `AudioOutput` — the one owner of speaker output |
+
+**Movement has one owner.** `MoveBaseHandler` is the only thing that touches the driver, and it
+holds the current motion. The server starts a movement; the obstacle reflex and the safety stops
+interrupt it. Because motion is latched rather than momentary — `forward` means keep going, not go
+a bit — an obstacle that clears can resume what was originally asked for, which is only possible
+because one object remembers what that was.
+
+**The reflex is local, and that is the point.** `ObstacleGuard` subscribes to `sensor.range` and
+answers in the time a serial read takes. It never asks the server anything, so it is the part of
+the movement path that still works when the WiFi does not. It holds *forward* motion only:
+blocking every direction would park Eva against a wall with no way to leave it.
 
 ### Inside the server
 
@@ -221,8 +244,8 @@ previous sentence never gets acted on.
 herself without acoustic echo cancellation. Real interruption needs AEC, and then the endpointer
 already has what it needs to detect that you have started talking over her.
 
-**Reflexes stay local.** Idle blinking already is. Obstacle stops and intent saccades would join it,
-so an unreachable server degrades Eva to a blinking, idling robot rather than a brick.
+**Reflexes stay local.** Idle blinking and the obstacle stop already are. Intent saccades would
+join them, so an unreachable server degrades Eva to a blinking, idling robot rather than a brick.
 
 **Streaming transcription is deliberately *not* on this list.** LocalAgreement-style streaming ASR
 confirms a prefix only once consecutive decodes agree, which costs latency; a batch decode of a
