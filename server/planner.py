@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from action_rules import match_action_from_text
 from actions import validate_command
@@ -17,18 +17,22 @@ class PlanResult:
     rule_key: Optional[str] = None
 
 
-def plan_from_transcript(text: str) -> PlanResult:
+def plan_from_transcript(text: str, *, allowed: Optional[Iterable[str]] = None) -> PlanResult:
     """
     Turn one transcript into commands, or hand it to the language model.
 
-    A matching rule wins outright; anything else becomes dialogue.
+    A matching rule wins outright; anything else becomes dialogue. `allowed` is
+    the connected robot's action set, and a rule is all or nothing against it:
+    a robot with no base must not answer "go forward" by saying "Moving
+    forward." and then standing still. Dropping the whole rule sends the
+    utterance to the language model, which can say something true instead.
     """
     rule = match_action_from_text(text)
     if rule is None:
         return PlanResult(commands=[], memory_items=[], language_model_input_text=text)
 
-    commands = [c for c in map(validate_command, rule.commands) if c is not None]
-    if not commands:
+    commands = [c for c in (validate_command(c, allowed) for c in rule.commands) if c is not None]
+    if len(commands) != len(rule.commands):
         return PlanResult(commands=[], memory_items=[], language_model_input_text=text)
 
     return PlanResult(

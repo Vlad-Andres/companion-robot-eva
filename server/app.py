@@ -8,6 +8,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
 
 from actions import list_actions
+from capabilities import SUPPORTED_PROTOCOLS
 from config import load_settings
 from dataset_recorder import DatasetSettings, build_dataset_recorder
 from language_model import build_language_model_client
@@ -41,6 +42,8 @@ def create_app() -> FastAPI:
             timeout_seconds=settings.ollama_timeout_seconds,
             max_reply_tokens=settings.ollama_max_reply_tokens,
             keep_alive=settings.ollama_keep_alive,
+            temperature=settings.ollama_temperature,
+            stub_reply=settings.language_model_stub_reply,
         )
         app.state.dataset_recorder = build_dataset_recorder(
             DatasetSettings(
@@ -68,7 +71,7 @@ def create_app() -> FastAPI:
 
     @app.get("/v1/protocol")
     async def protocol() -> dict[str, Any]:
-        return {"protocol": PROTOCOL_ID}
+        return {"protocol": PROTOCOL_ID, "supported_protocols": list(SUPPORTED_PROTOCOLS)}
 
     @app.get("/v1/actions")
     async def actions() -> dict[str, Any]:

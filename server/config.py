@@ -100,11 +100,17 @@ class Settings:
     piper_config_path: str
 
     language_model_enabled: bool
+    language_model_stub_reply: str
+    # Whether the model may emit commands as well as speech. Off falls back to
+    # a plain-text reply, which is the escape hatch when a model handles
+    # grammar-constrained output badly.
+    model_actions_enabled: bool
     ollama_base_url: str
     ollama_model: str
     ollama_timeout_seconds: float
     ollama_max_reply_tokens: int
     ollama_keep_alive: str
+    ollama_temperature: float
 
     debug_enabled: bool
 
@@ -137,11 +143,14 @@ def load_settings() -> Settings:
         piper_model_path=_env_path("EVA_PIPER_MODEL_PATH", "voices/en_GB-alba-medium.onnx"),
         piper_config_path=_env_path("EVA_PIPER_CONFIG_PATH", "voices/en_GB-alba-medium.onnx.json"),
         language_model_enabled=_env_bool("EVA_LANGUAGE_MODEL_ENABLED", False),
+        language_model_stub_reply=_env_str("EVA_LANGUAGE_MODEL_STUB_REPLY", ""),
+        model_actions_enabled=_env_bool("EVA_MODEL_ACTIONS_ENABLED", True),
         ollama_base_url=_env_str("EVA_OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
         ollama_model=_env_str("EVA_OLLAMA_MODEL", "llama3.2:3b"),
         ollama_timeout_seconds=_env_float("EVA_OLLAMA_TIMEOUT_SECONDS", 30.0),
         ollama_max_reply_tokens=_env_int("EVA_OLLAMA_MAX_REPLY_TOKENS", 80),
         ollama_keep_alive=_env_str("EVA_OLLAMA_KEEP_ALIVE", "30m"),
+        ollama_temperature=_env_float("EVA_OLLAMA_TEMPERATURE", 0.2),
         debug_enabled=_env_bool("EVA_DEBUG_ENABLED", False),
         dataset_capture_enabled=_env_bool("EVA_DATASET_CAPTURE_ENABLED", False),
         dataset_directory=_env_str("EVA_DATASET_DIR", "dataset"),

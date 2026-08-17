@@ -29,6 +29,45 @@ def base_envelope(message_type: str, *, message_id: Optional[str] = None, sessio
     return out
 
 
+def hello_message(*, supported_protocols: list[str], session_id: Optional[str] = None) -> dict[str, Any]:
+    """
+    The server's own declaration, sent before the robot says anything.
+
+    It goes out immediately rather than waiting for the robot's manifest:
+    firmware older than the handshake never sends one, and it still needs to
+    know it is connected.
+    """
+    out = base_envelope("hello", session_id=session_id)
+    out["protocol"] = PROTOCOL_ID
+    out["supported_protocols"] = supported_protocols
+    return out
+
+
+def capabilities_ack_message(
+    *,
+    protocol: str,
+    sensors: list[str],
+    actuators: list[str],
+    actions: list[dict[str, Any]],
+    unknown: list[str],
+    session_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    What the server took from the robot's manifest.
+
+    `actions` is the half that matters to the robot: the exact set of commands
+    this session can send it, so anything else arriving is a bug on the server
+    rather than something the robot has to guess about.
+    """
+    out = base_envelope("capabilities.ack", session_id=session_id)
+    out["protocol"] = protocol
+    out["accepted"] = {"sensors": sensors, "actuators": actuators}
+    out["actions"] = actions
+    if unknown:
+        out["unknown"] = unknown
+    return out
+
+
 def command_message(
     *,
     command_id: str,
