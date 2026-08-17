@@ -42,9 +42,18 @@ class SpeechClient(BasePerceptionClient):
         self,
         event_bus: EventBus,
         config: SpeechAPIConfig,
+        manifest: Optional[dict] = None,
     ) -> None:
+        """
+        Args:
+            manifest: this robot's hardware, sent on connect. The server builds
+                      the language model's output schema from it, so a robot
+                      that declares no base is never asked to move. None sends
+                      nothing, and the server assumes everything.
+        """
         super().__init__(event_bus)
         self.config = config
+        self._manifest = manifest
         self._websocket: Optional[websockets.WebSocketClientProtocol] = None
         self._outbox: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)
         self._manager_task: Optional[asyncio.Task] = None
@@ -90,29 +99,55 @@ class SpeechClient(BasePerceptionClient):
                 async with websockets.connect(websocket_url) as websocket:
                     log.info("speech WebSocket connected.")
                     self._websocket = websocket
-                    
+                    await self._announce_capabilities()
+
                     # Run producer (sender) and consumer (receiver) concurrently
                     # If either fails, both will be cancelled and we'll reconnect.
                     producer = asyncio.create_task(self._producer_loop())
                     consumer = asyncio.create_task(self._consumer_loop())
-                    
+
                     _done, pending = await asyncio.wait(
                         [producer, consumer],
                         return_when=asyncio.FIRST_COMPLETED
                     )
-                    
+
                     # Cleanup
                     for task in pending:
                         task.cancel()
-                    
+
                 log.warning("WebSocket connection closed normally. Reconnecting...")
             except asyncio.CancelledError:
                 break
             except (websockets.ConnectionClosed, Exception) as e:
                 log.error("WebSocket error: %s. Retrying in 5s...", e)
-            
+
             self._websocket = None
+            # Anything with wheels needs to hear about this: a movement the
+            # server started can no longer be stopped by the server.
+            await self.event_bus.publish(
+                Event(topic="perception.backend_disconnected", data=None, source=self.name)
+            )
             await asyncio.sleep(5)
+
+    async def _announce_capabilities(self) -> None:
+        """
+        Tell the server what this robot has, before any audio.
+
+        Sent on every connection, not just the first: a reconnect gets a fresh
+        session on the server with no memory of the last one, and a session
+        that never heard the manifest assumes the robot has everything.
+        """
+        if self._manifest is None or self._websocket is None:
+            return
+        try:
+            await self._websocket.send(json.dumps(self._manifest))
+            log.info(
+                "Announced capabilities: sensors=%s actuators=%s",
+                self._manifest.get("sensors"),
+                self._manifest.get("actuators"),
+            )
+        except Exception as exc:
+            log.warning("Could not announce capabilities: %s", exc)
 
     async def _producer_loop(self) -> None:
         """Pulls audio chunks from the outbox queue and sends them."""
@@ -218,6 +253,16 @@ class SpeechClient(BasePerceptionClient):
             }.get(str(state or ""))
             if topic:
                 await self.event_bus.publish(Event(topic=topic, data=None, source=self.name))
+            return
+
+        if message_type == "capabilities.ack":
+            # The complementary half of the handshake: exactly which commands
+            # this session can send. Anything else arriving is a server bug,
+            # and logging this is what makes that visible during bring-up.
+            actions = [a.get("name") for a in message.get("actions", []) if isinstance(a, dict)]
+            log.info("Server accepted capabilities; commands it may send: %s", actions)
+            if message.get("unknown"):
+                log.info("Server has no actions for: %s", message["unknown"])
             return
 
         if message_type == "error":

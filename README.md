@@ -78,11 +78,12 @@ robot/                 Raspberry Pi runtime
 ├── runtime.py         composition root — wires every service together
 ├── config.py          typed configuration dataclasses
 ├── core/              event bus, service registry, action dispatcher
-├── sensors/           microphone capture
+├── sensors/           microphone capture, forward range (US-100)
 ├── perception/        speech client — owns the WebSocket session
-├── actions/           eye expression and animation handlers
-├── behaviors/         server feedback, idle blink
+├── actions/           eye expression, animation and move_base handlers
+├── behaviors/         server feedback, idle blink, obstacle guard, motion safety
 ├── display/           OLED eye animation controller
+├── motion/            base driver — TB6612 H-bridge, and a null stand-in
 ├── utils/             logging, audio playback, WAV volume
 ├── sounds/            startup and blink sound effects
 ├── tools/             manual hardware diagnostics — run these by hand
@@ -121,6 +122,7 @@ server/                     Mac mini brain
 - [Protocol](docs/protocol.md) — WebSocket and REST contract, message shapes, configuration
 - [Roadmap](docs/roadmap.md) — what's built, what's next, known gaps
 - [Training data](docs/training-data.md) — capturing labelled audio for the on-device intent model
+- [Mapping proposal](docs/proposals/occupancy-mapping.md) — what it would take for Eva to know where she is
 - [Wiring](robot/HARDWARE.md) — which component goes on which pin
 
 ## Extending
@@ -128,6 +130,7 @@ server/                     Mac mini brain
 | To add… | Do this |
 |---|---|
 | A sensor | Subclass `BaseSensor`, register it in `runtime.py`, publish to a `sensor.*` topic |
+| A different motor driver | Subclass `BaseDriver` in `robot/motion/`, return it from `build_base_driver()` — nothing above it changes |
 | A fast-path phrase | Add a rule in `server/action_rules.py` — commands are wire-shape `{name, args}` |
 | An action | Add it to `server/actions.py` (definition + a `validate_command` branch), naming the actuator it `requires`, then handle the name in `robot/behaviors/server_feedback.py` |
 | A piece of hardware | Add it to `KNOWN_ACTUATORS` or `KNOWN_SENSORS` in `server/capabilities.py` and to the robot's manifest |
@@ -150,5 +153,17 @@ sentence splitting, reading a reply as it streams, and utterance endpointing. Th
 fake the detectors so they run in milliseconds and assert the logic; `tests/test_models.py` runs
 the real ONNX against synthesized speech and skips when the weights or macOS `say` are missing.
 
+The robot suite covers microphone capture rate, the movement path from a server command down to
+wheel speeds, the obstacle reflex, and the capability manifest — all with the hardware drivers
+stubbed, so it runs on a development machine.
+
 The scripts in `robot/tools/` are manual hardware checks, not automated tests — run them on the Pi
-by hand.
+by hand. After wiring the base, the two that matter are:
+
+```bash
+cd robot && .venv/bin/python tools/motor_check.py
+```
+
+Drives forward, backward and both turns in sequence with the wheels off the ground, so you can
+catch a reversed motor before it drives into something. `tools/range_check.py` does the same for
+the US-100, printing live distances and marking where the obstacle reflex will hold.

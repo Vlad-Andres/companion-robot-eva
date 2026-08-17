@@ -13,6 +13,7 @@ constructs, starts, and stops them.
 Data flow summary:
     Microphone → EventBus → SpeechClient → server (WebSocket)
     server replies → EventBus → ServerFeedbackService → ActionDispatcher → Handlers
+    RangeSensor → EventBus → ObstacleGuard → MoveBaseHandler → wheels
 """
 
 from __future__ import annotations
@@ -72,6 +73,14 @@ class RobotRuntime:
         self.eye_controller = self._init_eye_controller()
 
         # ------------------------------------------------------------------
+        # Motion — the one owner of the wheels
+        # ------------------------------------------------------------------
+        from motion.base_driver import build_base_driver
+
+        self.base_driver = build_base_driver(config.base)
+        self.move_base = self._build_move_base_handler()
+
+        # ------------------------------------------------------------------
         # Action handlers — registered with dispatcher
         # ------------------------------------------------------------------
         self._register_action_handlers()
@@ -120,6 +129,45 @@ class RobotRuntime:
             log.warning("Could not initialize EyeController: %s — display disabled.", exc)
             return None
 
+    def _build_move_base_handler(self):
+        """The single owner of the wheels — the driver is never touched elsewhere."""
+        from actions.move_base_handler import MoveBaseHandler
+
+        return MoveBaseHandler(driver=self.base_driver, config=self.config.base)
+
+    def capability_manifest(self) -> dict:
+        """
+        What this robot tells the server it has.
+
+        Built from what actually came up, not from what was configured: a base
+        whose driver failed to initialise is not declared, so the server never
+        offers movement to the language model and Eva never promises to go
+        somewhere she cannot.
+        """
+        actuators = ["speaker"]
+        if self.eye_controller is not None:
+            actuators.append("eyes")
+        if self.base_driver.available:
+            actuators.append("base")
+
+        # The range sensor is deliberately not declared. The manifest exists so
+        # the server can decide what to offer the language model, and nothing
+        # on the server consumes distance — the obstacle reflex is entirely
+        # local. It belongs here the day a server-side map wants the readings.
+        return {
+            "v": "eva/1",
+            "type": "capabilities",
+            "protocol": ["eva/1"],
+            "robot": {"id": "eva-pi", "name": "Eva"},
+            "sensors": ["microphone"],
+            "actuators": actuators,
+            "audio": {
+                "encoding": "pcm_s16le",
+                "sample_rate_hz": self.config.microphone.sample_rate,
+                "channels": 1,
+            },
+        }
+
     def _register_action_handlers(self) -> None:
         """Register all action handlers with the ActionDispatcher."""
         from actions.eye_expression_handler import (
@@ -139,14 +187,20 @@ class RobotRuntime:
                     rate_limit=display_rate_limit,
                 )
             )
+
+        self.action_dispatcher.register_handler(self.move_base)
         log.debug("Action handlers registered.")
 
     def _register_sensors(self) -> None:
         """Construct and register sensor services."""
         from sensors.microphone_sensor import MicrophoneSensor
+        from sensors.range_sensor import RangeSensor
 
         self.service_registry.register(
             MicrophoneSensor(self.event_bus, self.config.microphone)
+        )
+        self.service_registry.register(
+            RangeSensor(self.event_bus, self.config.range_sensor)
         )
         log.debug("Sensor services registered.")
 
@@ -155,14 +209,33 @@ class RobotRuntime:
         from perception.speech_client import SpeechClient
 
         self.service_registry.register(
-            SpeechClient(self.event_bus, self.config.speech_api)
+            SpeechClient(self.event_bus, self.config.speech_api, manifest=self.capability_manifest())
         )
         log.debug("Perception client services registered.")
 
     def _register_behaviors(self) -> None:
-        """Register behavior services (server feedback, idle blinking)."""
+        """Register behavior services (server feedback, idle blinking, safety)."""
         from behaviors.idle_blink import IdleBlinkService
+        from behaviors.motion_safety import MotionSafetyService
+        from behaviors.obstacle_guard import ObstacleGuard
         from behaviors.server_feedback import ServerFeedbackService
+
+        # Both of these stop the wheels without the server's involvement, so
+        # they are registered before anything that can start them moving.
+        self.service_registry.register(
+            ObstacleGuard(
+                event_bus=self.event_bus,
+                move_base=self.move_base,
+                config=self.config.range_sensor,
+            )
+        )
+        self.service_registry.register(
+            MotionSafetyService(
+                event_bus=self.event_bus,
+                move_base=self.move_base,
+                config=self.config.emergency_stop,
+            )
+        )
 
         self.service_registry.register(
             ServerFeedbackService(
@@ -267,12 +340,25 @@ class RobotRuntime:
     async def _shutdown(self) -> None:
         """
         Graceful shutdown sequence:
-          1. Stop all services.
-          2. Clear the display.
+          1. Stop the wheels.
+          2. Stop all services.
+          3. Clear the display.
         """
         log.info("Shutting down robot runtime...")
 
+        # First, before anything else can fail. A Ctrl+C that leaves the motors
+        # running is the one shutdown bug that does damage.
+        try:
+            await self.move_base.stop()
+        except Exception as exc:
+            log.error("Could not stop the base cleanly: %s", exc)
+
         await self.service_registry.stop_all()
+
+        try:
+            self.base_driver.close()
+        except Exception as exc:
+            log.warning("Could not release the base driver: %s", exc)
 
         # Clear the eye display.
         if self.eye_controller is not None:

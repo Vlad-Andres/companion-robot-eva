@@ -18,12 +18,18 @@
   model cannot name an action the robot lacks
 - The language model can act: replies are constrained to `say` plus `commands`, and the spoken half
   is still read out of the reply as it streams
+- Movement: a TB6612FNG differential base executing `move_base` on the Pi, a US-100 obstacle reflex
+  that holds forward motion at a wall without trapping the robot against it, and stops on a lost
+  server, on shutdown and on the HAT's button
+- The robot announces its own hardware, so what it actually brought up is what the model is offered
 
 ## Next, in order
 
-**1. Handle `move_base` on the robot.** The server-side half is finished — the manifest declares
-`base`, the model can ask for movement, and the command arrives validated. The robot still only
-logs it. This is now the shortest path to Eva actually moving.
+**1. Drive it.** Everything below the wheels is written and tested against stubs; none of it has
+met a motor. Wire the TB6612 per [HARDWARE.md](../robot/HARDWARE.md), run `tools/motor_check.py`
+with the wheels off the ground, and expect to set `invert_left` or `invert_right`. Then tune
+`drive_speed` and `turn_speed` — the defaults are cautious guesses about a floor nobody has driven
+on.
 
 **2. Tune the endpointer against real speech.** The defaults — 0.6 s hangover, 0.3 s pre-roll, a
 0.5 Smart Turn threshold — are starting points, not measurements. Capture a handful of real
@@ -53,11 +59,23 @@ small vision model over them. The manifest already carries `camera` as a known s
 handshake half is done. (The earlier stub and its HTTP client were removed as dead code — this
 starts fresh, over the existing WebSocket rather than a third service.)
 
+**8. Remember the apartment.** An occupancy map, a pose within it, and `navigate_to`. Blocked on
+wheel encoders — commanded motion drifts from actual motion without bound, and there are none in
+the parts list. The full technical plan is in
+[proposals/occupancy-mapping.md](proposals/occupancy-mapping.md).
+
 ## Known gaps
 
-- The robot does not send a manifest yet. It works — an undeclared robot is assumed to have
-  everything, which is exactly the old behaviour — but until it declares, nothing is actually
-  gated. That is a small change in `robot/perception/speech_client.py`.
+- **Eva cannot hear "stop" while she is speaking.** Her microphone is muted during playback so she
+  does not transcribe herself, so for the couple of seconds a reply takes, a spoken stop has
+  nowhere to land. The obstacle reflex and the HAT button cover it; the real fix is acoustic echo
+  cancellation plus the Tier 0 preemption in the tier design, which would let a stop cut through a
+  reply that is still being spoken.
+- `come_here` drives forward. There is no direction to home in on — no microphone array, no vision
+  tracking — so it means "towards where I am facing", which is right often enough to be useful and
+  wrong often enough to be worth fixing.
+- Movement is open-loop. No encoders, so the robot knows what it asked the wheels to do and nothing
+  about what they did. This is what blocks mapping — see the proposal.
 - Eva speaks before she moves. `say` comes before `commands` in the schema, which is what lets the
   reply start streaming, so the command lands a couple of hundred milliseconds after the sentence
   that announces it. Fine for "I'm coming over"; wrong for an urgent stop, which is what Tier 0 in
