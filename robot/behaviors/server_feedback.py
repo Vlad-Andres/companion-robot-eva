@@ -20,9 +20,9 @@ import asyncio
 import time
 from typing import Optional
 
-from config import AudioConfig
 from core.action_dispatcher import ActionDispatcher
 from core.event_bus import Event, EventBus
+from utils.audio import AudioOutput
 from utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -43,17 +43,17 @@ class ServerFeedbackService:
         self,
         event_bus: EventBus,
         action_dispatcher: ActionDispatcher,
-        audio_config: AudioConfig,
+        audio_output: AudioOutput,
     ) -> None:
         """
         Args:
             event_bus:         Shared EventBus.
             action_dispatcher: Dispatcher used to run eye actions.
-            audio_config:      Audio output settings for WAV playback.
+            audio_output:      Speaker output for synthesized speech.
         """
         self.event_bus = event_bus
         self.action_dispatcher = action_dispatcher
-        self.audio_config = audio_config
+        self.audio_output = audio_output
 
         self._feedback_lock = asyncio.Lock()
         self._audio_playback_lock = asyncio.Lock()
@@ -67,6 +67,7 @@ class ServerFeedbackService:
             "perception.backend_audio": self._on_backend_audio,
             "perception.backend_listening": self._on_backend_listening,
             "perception.backend_waiting": self._on_backend_waiting,
+            "perception.backend_ready": self._on_backend_ready,
         }
 
     async def start(self) -> None:
@@ -160,16 +161,24 @@ class ServerFeedbackService:
         )
 
     async def _on_backend_audio(self, event: Event) -> None:
+        """
+        Play one piece of synthesized speech, in order, never dropped.
+
+        A reply arrives as several WAVs now — one per sentence, as the model
+        writes them. The busy-window used to guard this, which drops anything
+        arriving inside it, so every sentence after the first would vanish.
+        Speech queues instead; only the eye feedback is throttled.
+        """
         audio_bytes = event.data
         if not isinstance(audio_bytes, (bytes, bytearray)) or not audio_bytes:
-            return
-
-        if not await self._try_reserve_feedback(duration_seconds=2.5):
             return
 
         async with self._audio_playback_lock:
             eyes_log.info("backend_audio bytes=%d", len(audio_bytes))
             self._cancel_thinking()
+            # Hold the eye-feedback window open for as long as we are talking,
+            # so glances and blinks do not fight the speaking face.
+            await self._try_reserve_feedback(duration_seconds=2.5)
             await self.action_dispatcher.dispatch_raw(
                 [{"type": "set_eye_expression", "payload": {"expression": "happy"}}]
             )
@@ -178,16 +187,7 @@ class ServerFeedbackService:
                 Event(topic="perception.backend_audio_playing", data=None, source=self.name)
             )
             try:
-                from utils.audio import play_wav_bytes_blocking
-
-                await asyncio.to_thread(
-                    play_wav_bytes_blocking,
-                    bytes(audio_bytes),
-                    device=self.audio_config.device,
-                    volume_percent=self.audio_config.volume_percent,
-                    mixer_control=self.audio_config.mixer_control,
-                    mixer_card=self.audio_config.mixer_card,
-                )
+                await asyncio.to_thread(self.audio_output.play_speech, bytes(audio_bytes))
             finally:
                 await self.event_bus.publish(
                     Event(topic="perception.backend_audio_done", data=None, source=self.name)
@@ -205,6 +205,10 @@ class ServerFeedbackService:
         await self.action_dispatcher.dispatch_raw(
             [{"type": "play_eye_animation", "payload": {"animation": anim}}]
         )
+
+    async def _on_backend_ready(self, _event: Event) -> None:
+        """The turn is finished — stop looking like she is still working."""
+        self._cancel_thinking()
 
     async def _on_backend_waiting(self, _event: Event) -> None:
         if time.monotonic() < self._feedback_busy_until:

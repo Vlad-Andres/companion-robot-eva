@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eva — listening</title>
+<style>
+  :root {
+    --bg: #0f1216;
+    --panel: #161b22;
+    --line: #232a34;
+    --fg: #e6e6e1;
+    --muted: #8b939e;
+    --speech: #4a9d8f;
+    --speech-dim: rgba(74, 157, 143, 0.16);
+    --kept: rgba(224, 151, 63, 0.22);
+    --kept-line: #e0973f;
+    --warn: #d4735a;
+    --mono: "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 1rem 1.25rem 2rem;
+    background: var(--bg); color: var(--fg);
+    font-family: var(--mono); font-size: 13px; line-height: 1.5;
+  }
+  h1 { font-size: 0.78rem; letter-spacing: 0.16em; text-transform: uppercase;
+       color: var(--muted); font-weight: 500; margin: 0 0 0.9rem; }
+  .grid { display: grid; gap: 0.9rem; max-width: 1180px; margin: 0 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--line); padding: 0.9rem 1rem; }
+  .panel h2 { font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase;
+              color: var(--muted); font-weight: 500; margin: 0 0 0.7rem; }
+
+  .topbar { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+  .pill { padding: 0.3em 0.75em; border: 1px solid var(--line); font-size: 0.72rem;
+          letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .pill.on { border-color: var(--speech); color: var(--speech); }
+  .pill.busy { border-color: var(--kept-line); color: var(--kept-line); }
+  .pill.off { border-color: var(--warn); color: var(--warn); }
+  .spacer { flex: 1; }
+
+  canvas { width: 100%; height: 190px; display: block; background: #0b0e12; border: 1px solid var(--line); }
+  .legend { display: flex; flex-wrap: wrap; gap: 1.1rem; margin-top: 0.6rem; font-size: 0.72rem; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; margin-right: 0.4em;
+              vertical-align: -1px; border-radius: 2px; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; }
+  @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 0.3rem 0.5rem 0.3rem 0; border-bottom: 1px solid var(--line); }
+  th { font-size: 0.66rem; letter-spacing: 0.1em; text-transform: uppercase;
+       color: var(--muted); font-weight: 500; }
+  td.n { text-align: right; }
+  tbody tr:last-child td { border-bottom: none; }
+  .bar { height: 6px; background: var(--kept-line); opacity: 0.75; min-width: 1px; }
+
+  .log { max-height: 260px; overflow-y: auto; }
+  .turn { padding: 0.5rem 0; border-bottom: 1px solid var(--line); }
+  .turn:last-child { border-bottom: none; }
+  .turn .heard { color: var(--fg); }
+  .turn .meta { color: var(--muted); font-size: 0.72rem; margin-top: 0.15rem; }
+  .turn .reply { color: var(--speech); font-size: 0.78rem; margin-top: 0.2rem; }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="grid">
+
+  <div class="topbar">
+    <h1 style="margin:0">Eva · listening</h1>
+    <span class="spacer"></span>
+    <span class="pill" id="conn">connecting</span>
+    <span class="pill" id="state">idle</span>
+    <span class="pill" id="rate">0 fps</span>
+  </div>
+
+  <div class="panel">
+    <h2>Live audio — top: what the microphone sends · bottom: what the server keeps</h2>
+    <canvas id="scope"></canvas>
+    <div class="legend">
+      <span><i style="background:#4a9d8f"></i>level</span>
+      <span><i style="background:#e0973f"></i>speech probability</span>
+      <span><i style="background:rgba(74,157,143,.35)"></i>detected as speech</span>
+      <span><i style="background:rgba(224,151,63,.35)"></i>captured utterance</span>
+      <span id="thresholdNote" style="margin-left:auto">threshold 0.50</span>
+    </div>
+  </div>
+
+  <div class="cols">
+    <div class="panel">
+      <h2>Where the time goes — last turn</h2>
+      <table>
+        <thead><tr><th>Stage</th><th class="n">Last</th><th class="n">Avg</th><th style="width:38%"></th></tr></thead>
+        <tbody id="stages"><tr><td colspan="4" class="empty">waiting for a turn…</td></tr></tbody>
+      </table>
+      <p class="meta" style="color:var(--muted);font-size:0.72rem;margin:0.7rem 0 0" id="turnTotal"></p>
+    </div>
+
+    <div class="panel">
+      <h2>Turns</h2>
+      <div class="log" id="log"><div class="empty">say something…</div></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(() => {
+  const HISTORY = 700;            // ~22 s at 32 ms per frame
+  const frames = [];              // {rms, p, speech}
+  const kept = [];                // {startIndex, frames} captured utterances
+  const stageOrder = ["endpoint", "stt", "plan", "llm_first_sentence", "llm_total", "tts"];
+  const stageStats = new Map();   // name -> {last, total, n}
+  let lastState = "idle";
+  let framesThisSecond = 0, fps = 0;
+
+  const $ = (id) => document.getElementById(id);
+  const canvas = $("scope");
+  const ctx = canvas.getContext("2d");
+
+  function resize() {
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = canvas.clientWidth * ratio;
+    canvas.height = canvas.clientHeight * ratio;
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  // --- drawing -------------------------------------------------------
+
+  function draw() {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    const mid = h * 0.52;
+    ctx.clearRect(0, 0, w, h);
+
+    const step = w / HISTORY;
+    const offset = HISTORY - frames.length;
+
+    // Bands: what the detector called speech.
+    ctx.fillStyle = "rgba(74,157,143,0.16)";
+    let bandStart = null;
+    frames.forEach((f, i) => {
+      if (f.speech && bandStart === null) bandStart = i;
+      if ((!f.speech || i === frames.length - 1) && bandStart !== null) {
+        ctx.fillRect((offset + bandStart) * step, 0, (i - bandStart + 1) * step, mid);
+        bandStart = null;
+      }
+    });
+
+    // Bands: what actually got captured and sent to Whisper — including the
+    // pre-roll, which is the part you could not see before.
+    ctx.fillStyle = "rgba(224,151,63,0.22)";
+    for (const k of kept) {
+      const start = k.startIndex - (frames.length - HISTORY) - offset;
+      ctx.fillRect((offset + k.startIndex) * step, mid, k.frames * step, h - mid);
+    }
+
+    // Level, mirrored around the midline.
+    ctx.beginPath();
+    frames.forEach((f, i) => {
+      const x = (offset + i) * step;
+      const amp = Math.min(1, f.rms * 6) * (mid * 0.9);
+      if (i === 0) ctx.moveTo(x, mid - amp); else ctx.lineTo(x, mid - amp);
+    });
+    for (let i = frames.length - 1; i >= 0; i--) {
+      const x = (offset + i) * step;
+      const amp = Math.min(1, frames[i].rms * 6) * (mid * 0.9);
+      ctx.lineTo(x, mid + amp);
+    }
+    ctx.closePath();
+    ctx.fillStyle = "rgba(74,157,143,0.55)";
+    ctx.fill();
+
+    // Threshold line for the probability trace.
+    ctx.strokeStyle = "rgba(139,147,158,0.35)";
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, h - (h - mid) * 0.5); ctx.lineTo(w, h - (h - mid) * 0.5);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Speech probability in the lower half.
+    ctx.beginPath();
+    frames.forEach((f, i) => {
+      const x = (offset + i) * step;
+      const y = h - f.p * (h - mid) * 0.95;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = "#e0973f";
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(139,147,158,0.25)";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(w, mid); ctx.stroke();
+
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+
+  // --- panels --------------------------------------------------------
+
+  function renderStages() {
+    const rows = stageOrder.filter((s) => stageStats.has(s));
+    if (!rows.length) return;
+    const max = Math.max(...rows.map((s) => stageStats.get(s).last), 1);
+    $("stages").innerHTML = rows.map((s) => {
+      const d = stageStats.get(s);
+      const avg = d.total / d.n;
+      const slow = d.last > 800 ? ' style="color:var(--warn)"' : "";
+      return `<tr><td>${s.replace(/_/g, " ")}</td>` +
+             `<td class="n"${slow}>${d.last.toFixed(0)} ms</td>` +
+             `<td class="n">${avg.toFixed(0)} ms</td>` +
+             `<td><div class="bar" style="width:${(d.last / max) * 100}%"></div></td></tr>`;
+    }).join("");
+  }
+
+  function addTurn({ heard, rule, seconds, reply }) {
+    const log = $("log");
+    if (log.querySelector(".empty")) log.innerHTML = "";
+    const el = document.createElement("div");
+    el.className = "turn";
+    el.innerHTML =
+      `<div class="heard">“${heard}”</div>` +
+      `<div class="meta">${seconds ? seconds.toFixed(2) + " s captured · " : ""}` +
+      `${rule ? "rule: " + rule : "dialogue"}</div>` +
+      (reply ? `<div class="reply">→ ${reply}</div>` : "");
+    log.prepend(el);
+    while (log.children.length > 40) log.removeChild(log.lastChild);
+  }
+
+  function setState(state) {
+    lastState = state;
+    const pill = $("state");
+    pill.textContent = state;
+    pill.className = "pill" + (state === "listening" ? " on" : state === "idle" ? "" : " busy");
+  }
+
+  setInterval(() => {
+    fps = framesThisSecond; framesThisSecond = 0;
+    $("rate").textContent = fps + " fps";
+    $("rate").className = "pill" + (fps > 0 ? " on" : "");
+  }, 1000);
+
+  // --- transport -----------------------------------------------------
+
+  let pendingTurn = null;
+
+  function handle(event) {
+    switch (event.type) {
+      case "frame": {
+        frames.push({ rms: event.rms, p: event.p, speech: event.speech });
+        if (frames.length > HISTORY) { frames.shift(); kept.forEach((k) => k.startIndex--); }
+        while (kept.length && kept[0].startIndex + kept[0].frames < 0) kept.shift();
+        framesThisSecond++;
+        if (event.speech && lastState === "idle") setState("listening");
+        break;
+      }
+      case "utterance": {
+        // Mark the captured span, ending at the current right edge.
+        kept.push({ startIndex: Math.max(0, frames.length - event.frames), frames: event.frames });
+        pendingTurn = { seconds: event.seconds };
+        $("turnTotal").textContent = `captured ${event.seconds.toFixed(2)} s (incl. ${event.preroll.toFixed(2)} s pre-roll)`;
+        break;
+      }
+      case "stage": {
+        const d = stageStats.get(event.stage) || { last: 0, total: 0, n: 0 };
+        d.last = event.ms; d.total += event.ms; d.n++;
+        stageStats.set(event.stage, d);
+        renderStages();
+        break;
+      }
+      case "transcript": {
+        pendingTurn = { ...(pendingTurn || {}), heard: event.text, rule: event.rule };
+        break;
+      }
+      case "reply": {
+        pendingTurn = { ...(pendingTurn || {}), reply: event.text };
+        break;
+      }
+      case "turn_end": {
+        if (pendingTurn && pendingTurn.heard) addTurn(pendingTurn);
+        pendingTurn = null;
+        break;
+      }
+      case "state": setState(event.state); break;
+      case "config": $("thresholdNote").textContent = `threshold ${event.vad_threshold.toFixed(2)} · hangover ${event.hangover.toFixed(2)} s · pre-roll ${event.preroll.toFixed(2)} s`; break;
+    }
+  }
+
+  function connect() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${proto}//${location.host}/v1/websocket/debug`);
+    ws.onopen = () => { $("conn").textContent = "live"; $("conn").className = "pill on"; };
+    ws.onclose = () => {
+      $("conn").textContent = "reconnecting"; $("conn").className = "pill off";
+      setState("idle");
+      setTimeout(connect, 1500);
+    };
+    ws.onmessage = (m) => { try { handle(JSON.parse(m.data)); } catch (_) {} };
+  }
+  connect();
+})();
+</script>
+</body>
+</html>

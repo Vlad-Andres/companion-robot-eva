@@ -30,8 +30,11 @@ class MicrophoneConfig:
     """Configuration for audio capture."""
     device_index: Optional[int] = None
     sample_rate: int = 16000
-    chunk_duration_seconds: float = 1.5      # 1.5s is the "sweet spot" for speed vs accuracy
     channels: int = 1
+    # 512 samples = 32 ms, the frame size Silero VAD is built around. The
+    # server reassembles these, so this is a transport size and has no effect
+    # on transcription accuracy — Whisper only ever sees whole utterances.
+    frame_samples: int = 512
 
 
 @dataclass
@@ -52,16 +55,39 @@ class IdleBlinkConfig:
     long_blink_chance: float = 0.2      # Probability of a slow blink (vs quick)
 
 
+@dataclass(frozen=True)
+class Sound:
+    """
+    A sound effect, and how loud it is relative to the master volume.
+
+    gain_percent is a trim, not an absolute level: 100 plays at the master
+    volume untouched, 30 plays noticeably quieter than everything else.
+    Anything below 100 rescales the samples, which costs a little quality —
+    fine for short effects, which is why speech defaults to 100.
+    """
+    path: str
+    gain_percent: int = 100
+
+
 @dataclass
 class AudioConfig:
-    """Configuration for sound effects."""
+    """Configuration for all speaker output — see utils/audio.AudioOutput."""
     enabled: bool = True
     device: str = "default"                 # ALSA device name (e.g. "hw:0,0" or "plughw:0,0")
     mixer_card: int | None = None
     mixer_control: str = "Master"
-    volume_percent: int = 5
-    startup_sound: str = "sounds/startup.mp3"
-    blink_sound: str = "sounds/blink3.wav"
+
+    # Master level, set once on the mixer at startup. This is the one knob
+    # that moves everything; the per-sound gains below are relative to it.
+    volume_percent: int = 70
+
+    # Eva's voice. Leave at 100 so synthesized speech keeps its full dynamic
+    # range; lower the master volume instead if she is too loud overall.
+    speech_gain_percent: int = 100
+
+    startup: Sound = field(default_factory=lambda: Sound("sounds/startup.mp3"))
+    # Blinks fire every few seconds, so they sit well below the voice.
+    blink: Sound = field(default_factory=lambda: Sound("sounds/blink3.wav", gain_percent=30))
 
 
 @dataclass
