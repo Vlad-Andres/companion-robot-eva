@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 import sys
 from pathlib import Path
 from typing import Optional
@@ -20,11 +21,13 @@ import websockets
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from actions import MOVE_COMMANDS  # noqa: E402
+from actions import MOVE_COMMANDS, describe_actions  # noqa: E402
+from capabilities import SUPPORTED_PROTOCOLS, parse_capabilities, unknown_hardware  # noqa: E402
 from protocol import (  # noqa: E402
-    base_envelope,
+    capabilities_ack_message,
     command_message,
     dumps_message,
+    hello_message,
     new_id,
     speech_start_message,
     status_message,
@@ -68,14 +71,47 @@ async def _ticker(websocket) -> None:
         )
 
 
+async def _acknowledge_capabilities(websocket, message: str) -> None:
+    """
+    Answer a manifest the way the real server would.
+
+    The robot has no handshake code yet; when it grows one, this is what will
+    be on the other end of it during `make mock`.
+    """
+    try:
+        data = json.loads(message)
+    except ValueError:
+        return
+    if not isinstance(data, dict) or data.get("type") != "capabilities":
+        return
+
+    capabilities = parse_capabilities(data)
+    if capabilities is None:
+        return
+
+    print(f"RX <- capabilities: {capabilities.describe()}")
+    await _send(
+        websocket,
+        capabilities_ack_message(
+            protocol=SUPPORTED_PROTOCOLS[0],
+            sensors=sorted(capabilities.sensors),
+            actuators=sorted(capabilities.actuators),
+            actions=describe_actions(capabilities),
+            unknown=unknown_hardware(capabilities),
+            session_id=SESSION_ID,
+        ),
+    )
+
+
 async def handle_ws(websocket, _path: Optional[str] = None) -> None:
-    await _send(websocket, base_envelope("hello", session_id=SESSION_ID))
+    await _send(websocket, hello_message(supported_protocols=list(SUPPORTED_PROTOCOLS), session_id=SESSION_ID))
     await _send(websocket, status_message(state="ready", session_id=SESSION_ID))
 
     ticker_task = asyncio.create_task(_ticker(websocket))
     try:
-        async for _message in websocket:
-            pass
+        async for message in websocket:
+            if isinstance(message, str):
+                await _acknowledge_capabilities(websocket, message)
     finally:
         ticker_task.cancel()
 

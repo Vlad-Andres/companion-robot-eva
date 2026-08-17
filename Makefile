@@ -6,7 +6,7 @@
 
 PY ?= python3
 
-.PHONY: help setup-server models server test setup-robot robot mock dataset clean
+.PHONY: help setup-server models server test setup-robot robot mock mock-robot dataset clean
 
 SILERO_URL ?= https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx
 SMART_TURN_URL ?= https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/main/smart-turn-v3.2-cpu.onnx
@@ -23,7 +23,9 @@ help:
 	@echo "  make robot          run the robot runtime"
 	@echo ""
 	@echo "Development:"
-	@echo "  make mock           fake eva/1 server cycling movement commands"
+	@echo "  make mock           fake eva/1 server cycling movement commands (no Mac needed)"
+	@echo "  make mock-robot     fake Pi talking to the real server (no Pi needed)"
+	@echo "                      e.g. make mock-robot ARGS='--say \"turn left\"'"
 	@echo "  make dataset        summarise captured training data"
 	@echo "  make clean          remove venvs and __pycache__"
 
@@ -67,6 +69,11 @@ robot:
 
 mock:
 	cd server && .venv/bin/python tools/mock_command_server.py
+
+# The other direction: a fake Pi against the real server, so the whole
+# listen-decide-speak path can be exercised on the Mac alone.
+mock-robot:
+	cd server && .venv/bin/python tools/mock_robot.py $(ARGS)
 
 dataset:
 	cd server && .venv/bin/python tools/dataset_summary.py

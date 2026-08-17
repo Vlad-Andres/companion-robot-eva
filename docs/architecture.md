@@ -35,13 +35,19 @@ flowchart LR
     VAD["Silero VAD<br/>per 32 ms frame"]
     TURN["Smart Turn v3<br/>is the sentence finished?"]
     STT["faster-whisper"]
+    CAP["capabilities<br/>manifest → allowed actions"]
     PLAN["planner + action_rules"]
-    LLM["Ollama<br/>streamed tokens"]
+    LLM["Ollama<br/>streamed, schema-constrained"]
+    RS["ReplyStream<br/>say out, commands out"]
     SENT["SentenceAccumulator"]
     TTS["Piper (or macOS say)"]
     REC["DatasetRecorder"]
   end
 
+  SC -->|"capabilities"| CAP
+  CAP -->|"capabilities.ack"| SC
+  CAP -->|"allowed actions"| PLAN
+  CAP -->|"output schema"| LLM
   MIC -->|"sensor.audio"| SC
   SC -->|"binary PCM, continuous"| EP
   EP <--> VAD
@@ -52,7 +58,9 @@ flowchart LR
   PLAN -->|"rule matched"| TTS
   PLAN -->|"movement"| SC
   PLAN -->|"no match → dialogue"| LLM
-  LLM --> SENT
+  LLM --> RS
+  RS -->|"say, as it arrives"| SENT
+  RS -->|"commands, once closed"| SC
   SENT -->|"sentence at a time"| TTS
   TTS -->|"WAV per sentence"| SC
   SC -->|"perception.backend_*"| FB
@@ -68,10 +76,12 @@ rather than clipped. When speech stops, Smart Turn decides whether the sentence 
 finished; if it doesn't, the window extends and a thinking pause no longer cuts you off.
 
 The completed utterance goes to Whisper, then to the rule matcher. A match speaks its confirmation
-and sends any movement as a command. No match becomes dialogue: Ollama's tokens are streamed into a
-sentence accumulator, and each sentence is synthesised and sent as it completes — so Eva starts
-talking while the rest of the reply is still being written. The robot mutes its own microphone
-during playback so she doesn't transcribe herself.
+and sends any movement as a command. No match becomes dialogue: Ollama is asked for a reply shaped
+`{"say": …, "commands": […]}`, and the tokens are streamed into a sentence accumulator, so Eva
+starts talking while the rest of the reply is still being written — the spoken field is read out of
+the JSON character by character rather than waiting for the closing brace. Commands parsed from the
+finished object are validated and sent. The robot mutes its own microphone during playback so she
+doesn't transcribe herself.
 
 **Why the deciding happens on the Mac.** The robot used to drop quiet frames with an RMS threshold.
 That put the most consequential judgement in the pipeline on the weakest CPU, using a fixed
@@ -80,9 +90,15 @@ it crosses the threshold, and the beginning of a word is quiet. Continuous strea
 which is nothing on a WiFi link, and it buys an important property: **audio that was never
 discarded can still be recovered.** Pre-roll is only possible because nothing was thrown away.
 
-**What is still simple.** There is one matching tier, not four. The language model is prompted for
-plain text rather than constrained by the action registry. There is no arbiter, no epochs, and no
-capability handshake — the robot executes whatever command arrives.
+**What the robot is allowed to be asked.** On connect the robot announces its sensors and
+actuators, and the server answers with the subset of the action registry that hardware supports.
+That subset is not advice — it is the enum in the language model's output schema, so a model
+physically cannot name an action this robot lacks, and it is the argument to `validate_command()`
+behind it in case one tries. A robot that sends no manifest is assumed to have everything, which is
+how firmware older than the handshake keeps working unchanged.
+
+**What is still simple.** There is one matching tier, not four. There is no arbiter and no epochs.
+Commands land just after the sentence that announces them, rather than with it.
 
 **What is worth keeping.** Components publish to topics on an async bus and never call each other
 directly, so a slow network client can't block audio capture. Services with `start()`/`stop()` are
@@ -113,8 +129,10 @@ services, and handles shutdown. Behavior lives in services.
 session. Listening is split across three files: `voice_activity.py` (is this frame speech?),
 `turn_detection.py` (has the speaker finished?) and `endpointing.py` (the buffer and the decision).
 `planner.py` decides commands-versus-dialogue, `action_rules.py` holds the phrase rules, and
-`actions.py` is the registry every command is validated against. `sentences.py` cuts the streamed
-reply into speakable pieces.
+`actions.py` is the registry every command is validated against. `capabilities.py` reads the
+robot's manifest and decides how much of that registry this session may use. `reply_stream.py`
+separates the spoken half of a model reply from the commands, and `sentences.py` cuts the spoken
+half into speakable pieces.
 
 The detectors are injected into the endpointer rather than constructed by it, which is what lets
 the endpointing logic be tested with fakes in milliseconds and no model files. `make models`
@@ -123,7 +141,7 @@ speech and ending turns on silence alone, and says so in the log.
 
 ### Who decides what
 
-Exactly **two** of the server's seventeen modules know a network exists:
+Exactly **two** of the server's twenty modules know a network exists:
 
 ```
 $ grep -ln "WebSocket\|send_bytes\|send_text" server/*.py
@@ -135,7 +153,8 @@ websocket_session.py
 only these three:
 
 1. **Transport** — the only place `receive()`, `send_text()` and `send_bytes()` appear.
-2. **Per-connection state** — the endpointer, `frame_carry`, `ignore_until`.
+2. **Per-connection state** — the endpointer, `frame_carry`, `ignore_until`, and this robot's
+   capabilities.
 3. **Orchestration** — the order the stages run in.
 
 That third one is worth stating precisely, because it is easy to assume the session decides more
@@ -148,7 +167,9 @@ than it does. It sequences the work; it makes none of the judgements.
 | Where does the utterance start and end? | `endpointing.py` |
 | What were the words? | `speech_to_text.py` |
 | Command or conversation? | `planner.py`, `action_rules.py` |
+| What can this robot be asked to do? | `capabilities.py`, `actions.py` |
 | Is this command legal? | `actions.py` — `validate_command()` |
+| Which part of a reply is speech? | `reply_stream.py` |
 | Where does a spoken sentence end? | `sentences.py` |
 | *In what order all of the above happens* | `websocket_session.py` |
 
@@ -170,13 +191,9 @@ state alone. Worth doing when tiers arrive, not before.
 ## Where this is going
 
 None of this exists yet. It is recorded here because the shape of the code today — the registry,
-the event bus, the validated command envelope — is chosen to make these additions cheap.
-
-**Capabilities become grammar.** The robot announces its hardware on connect. The server builds the
-models' JSON output schema from that manifest, so a model *cannot* emit an action the robot lacks.
-The registry and `validate_command()` are the half of this that already exists; the handshake and
-the schema-constrained prompt are the missing half. Ollama's `format` parameter accepts a JSON
-schema directly, which is the mechanism.
+the manifest, the event bus, the validated command envelope — is chosen to make these additions
+cheap. Capabilities-as-grammar used to be the first item on this list; it is now in
+[what runs today](#what-runs-today), and the rest of the list assumed it.
 
 **Four tiers instead of one.** An utterance would escalate through tiers that get smarter and
 slower, each able to end the turn:

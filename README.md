@@ -44,6 +44,24 @@ Point the Pi at your Mac by setting `speech_api.base_url` in [robot/config.py](r
 **No Mac handy?** `make mock` starts a fake server that cycles movement commands, so you can
 exercise the robot's eyes and command handling on its own.
 
+**No Pi handy?** `make mock-robot` is the mirror image: a fake robot that connects to the real
+server, announces a hardware manifest, streams audio and prints everything that comes back.
+
+```bash
+make mock-robot ARGS='--say "turn left"'
+```
+
+`--say` needs macOS `say` to generate the audio; `--wav recording.wav` sends a file instead.
+Change what the robot claims to have and watch the answer change — a robot without wheels gets
+conversation where one with wheels gets a command:
+
+```bash
+make mock-robot ARGS='--say "turn left" --actuators speaker,eyes'
+```
+
+To run the whole path with no Whisper and no Ollama at all, put
+`EVA_SPEECH_TO_TEXT_STUB_TEXT` and `EVA_LANGUAGE_MODEL_STUB_REPLY` in `server/.env`.
+
 ### Getting the code onto the Pi
 
 Use the sparse clone so the Pi never downloads the server or its ~63 MB voice model:
@@ -80,9 +98,11 @@ server/                     Mac mini brain
 ├── endpointing.py          where one utterance ends and the next begins
 ├── voice_activity.py       Silero VAD — is this frame speech?
 ├── turn_detection.py       Smart Turn — has the speaker finished?
+├── capabilities.py         the robot's hardware manifest, and the handshake
 ├── planner.py              transcript → commands or dialogue
 ├── action_rules.py         fast-path phrase matching
-├── actions.py              action registry, schemas and validation
+├── actions.py              action registry, validation, model output schema
+├── reply_stream.py         reads speech out of a reply that is still being written
 ├── sentences.py            cuts the streamed reply into speakable pieces
 ├── protocol.py             message envelopes
 ├── config.py               environment-variable settings
@@ -91,7 +111,7 @@ server/                     Mac mini brain
 ├── tests/                  server test suite
 ├── models/                 ONNX weights — make models (gitignored)
 ├── voices/                 Piper voice model
-└── tools/                  mock server, dataset summary
+└── tools/                  mock robot, mock server, dataset summary
 ```
 
 ## Docs
@@ -109,13 +129,15 @@ server/                     Mac mini brain
 |---|---|
 | A sensor | Subclass `BaseSensor`, register it in `runtime.py`, publish to a `sensor.*` topic |
 | A fast-path phrase | Add a rule in `server/action_rules.py` — commands are wire-shape `{name, args}` |
-| An action | Add it to `server/actions.py` (definition + a `validate_command` branch), then handle the name in `robot/behaviors/server_feedback.py` |
+| An action | Add it to `server/actions.py` (definition + a `validate_command` branch), naming the actuator it `requires`, then handle the name in `robot/behaviors/server_feedback.py` |
+| A piece of hardware | Add it to `KNOWN_ACTUATORS` or `KNOWN_SENSORS` in `server/capabilities.py` and to the robot's manifest |
 | A behavior | Add a service in `robot/behaviors/`, register it in `runtime.py` |
 | An eye animation | Add an `Animation` member and a method to `robot/display/eye_controller.py` |
 
 `server/actions.py` is the single source of truth for what Eva can do: the same registry is served
-over `GET /v1/actions` and gates every command before it reaches the wire. Constraining the
-language model's output with it is the next step — see the roadmap.
+over `GET /v1/actions`, filtered by the connected robot's manifest, turned into the language
+model's output schema, and used to gate every command before it reaches the wire. An action the
+robot has no hardware for is not merely discouraged — the model has no way to name it.
 
 ## Tests
 
@@ -123,10 +145,10 @@ language model's output with it is the next step — see the roadmap.
 make test
 ```
 
-Covers the server: REST routes, WebSocket sessions, phrase matching, sentence splitting, and
-utterance endpointing. The endpointing tests fake the detectors so they run in milliseconds and
-assert the logic; `tests/test_models.py` runs the real ONNX against synthesized speech and skips
-when the weights or macOS `say` are missing.
+Covers the server: REST routes, WebSocket sessions, the capability handshake, phrase matching,
+sentence splitting, reading a reply as it streams, and utterance endpointing. The endpointing tests
+fake the detectors so they run in milliseconds and assert the logic; `tests/test_models.py` runs
+the real ONNX against synthesized speech and skips when the weights or macOS `say` are missing.
 
 The scripts in `robot/tools/` are manual hardware checks, not automated tests — run them on the Pi
 by hand.
